@@ -349,7 +349,7 @@ struct skbox_config *skbox_parse_config(FILE *input_file) {
 		}
 		result->continue_entry = 0;
 		char *saveptr = NULL;
-		for (char *token = strtok_r(line, " ", &saveptr); token; token = strtok_r(NULL, " ", &saveptr)) {
+		for (char *token = strtok_r(line, " \t", &saveptr); token; token = strtok_r(NULL, " ", &saveptr)) {
 			if (parse_config_token(token, result) < 0) {
 				fprintf(stderr, "Syntax error on line %d, near '%s'\n", linenr, token);
 				return NULL;
