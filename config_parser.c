@@ -250,6 +250,7 @@ static int max_maps_handler(const char *s, struct skbox_config *cfg) {
 	if (!s) return -1;
 	unsigned int max_maps = atoi(s);
 	if (cfg->nr_maps) return -1;
+	if (max_maps == 0 || max_maps > 1000) return -1;
 	cfg->nr_maps = max_maps;
 	cfg->maps = calloc(sizeof(struct skbox_map_list), cfg->nr_maps);
 	if (!cfg->maps) return -1;
@@ -259,6 +260,7 @@ static int max_rules_handler(const char *s, struct skbox_config *cfg) {
 	if (!s) return -1;
 	unsigned int max_rules = atoi(s);
 	if (cfg->nr_rules) return -1;
+	if (max_rules == 0 || max_rules > 1000) return -1;
 	cfg->nr_rules = max_rules;
 	cfg->rules = calloc(sizeof(struct skbox_rule_list), cfg->nr_rules);
 	if (!cfg->rules) return -1;
