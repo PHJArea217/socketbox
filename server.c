@@ -14,10 +14,11 @@ int main(int argc, char **argv) {
 	int force_freebind = 0;
 	int force_reuseaddr = 1;
 	int force_reuseport = 0;
+	int do_exec = 0;
 	const char *config_file = "/etc/socketbox.conf";
 	int opt = -1;
 	/* FIXME: nsenter + enter user namespace */
-	while ((opt = getopt(argc, argv, "f:l:p:tFRrs:")) >= 0) {
+	while ((opt = getopt(argc, argv, "f:l:p:tFRrs:e")) >= 0) {
 		switch(opt) {
 			case 'f':
 				config_file = optarg;
@@ -45,6 +46,9 @@ int main(int argc, char **argv) {
 			case 's':
 				server_socket_fd = atoi(optarg);
 				break;
+			case 'e':
+				do_exec = 1;
+				break;
 			default:
 				/* FIXME: help text */
 				return 1;
@@ -70,6 +74,13 @@ int main(int argc, char **argv) {
 			perror("bind");
 			return 1;
 		}
+	}
+	if (do_exec) {
+		char tmpbuf[40] = {0};
+		if (snprintf(tmpbuf, 40, "%d", server_socket_fd) < 0) return 1;
+		if (setenv("SKBOX_LISTEN_FD", tmpbuf, 1)) return 1;
+		execvp(argv[optind], &argv[optind]);
+		return 127;
 	}
 	FILE *config_f = fopen(config_file, "r");
 	if (!config_f) {

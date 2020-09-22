@@ -28,11 +28,10 @@ The available clients are:
 * socketbox-preload is an LD\_PRELOAD library that intercepts the "listen" and
 "accept" system calls, allowing virtually any TCP server daemon to take
 advantage of socketbox. This is the most compatible, but like all LD\_PRELOAD
-libraries, things can break. *to be written*
+libraries, things can break.
 * socketbox-relay is a native client. A socket relay was chosen because it can
 be used to proxy to virtually any other server, but can incur slight overhead,
 especially if the end server is on the same system as the socketbox daemon.
-*to be imported from inet-relay*
 
 Another remarkable feature of socketbox is the ability to control where the
 socket is sent just by the server IP address. The intended use case for this
