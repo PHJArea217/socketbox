@@ -24,7 +24,7 @@ from the socketbox server.
 The available clients are:
 
 * socketbox-inetd is the safest, but requires that the daemon using it have an
-"inetd mode" or equivalent \(e.g. sshd -i). Only "wait" daemons are supported.
+"inetd mode" or equivalent \(e.g. sshd -i).
 * socketbox-preload is an LD\_PRELOAD library that intercepts the "listen" and
 "accept" system calls, allowing virtually any TCP server daemon to take
 advantage of socketbox. This is the most compatible, but like all LD\_PRELOAD

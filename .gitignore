@@ -3,4 +3,5 @@ socketbox
 socketbox-inetd
 socketbox-relay
 send-receive-fd
+socket-query
 libsocketbox-preload.so
