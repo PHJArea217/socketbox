@@ -90,6 +90,31 @@ static int fd_relay(int infd, int outfd, size_t length) {
 	return 3;
 #endif
 }
+static int send_proxy_protocol(int sourcefd, int targetfd) {
+	char src_ip[INET6_ADDRSTRLEN+10] = {0};
+	char dst_ip[INET6_ADDRSTRLEN+10] = {0};
+	struct sockaddr_in6 src_info = {0};
+	struct sockaddr_in6 dst_info = {0};
+	socklen_t r = sizeof(struct sockaddr_in6);
+	if (getsockname(sourcefd, &dst_info, &r) || r != sizeof(struct sockaddr_in6)) {
+		return -1;
+	}
+	r = sizeof(struct sockaddr_in6);
+	if (getpeername(sourcefd, &src_info, &r) || r != sizeof(struct sockaddr_in6)) {
+		return -1;
+	}
+	if (!inet_ntop(AF_INET6, &src_info.sin6_addr, src_ip, sizeof(src_ip))) return -1;
+	if (!inet_ntop(AF_INET6, &dst_info.sin6_addr, dst_ip, sizeof(dst_ip))) return -1;
+	char output_buf[2*INET6_ADDRSTRLEN + 50] = {0};
+	ssize_t l = snprintf(output_buf, sizeof(output_buf) - 1, "PROXY TCP6 %s %s %lu %lu\r\n", src_ip, dst_ip, (unsigned long) ntohs(src_info.sin6_port), (unsigned long) ntohs(dst_info.sin6_port));
+	if (l <= 0) return -1;
+	if (l >= sizeof(output_buf)) return -1;
+	/* Usually this function is called at the beginning, where the socket buffers are likely still empty */
+	if (send(targetfd, output_buf, l, MSG_NOSIGNAL|MSG_DONTWAIT) != l) {
+		return -1;
+	}
+	return 0;
+}
 /* states:
  * -1 = still connecting
  * 0 = normal transfer, poll in
@@ -166,7 +191,8 @@ int main(int argc, char **argv) {
 	int nat64_mode = 0;
 	const char *socketbox_listen = NULL;
 	int recvmsg_only = 0;
-	while ((opt = getopt(argc, argv, "I:n:c:p:l:u:NP:s:e")) != -1) {
+	int do_proxy_protocol = 0;
+	while ((opt = getopt(argc, argv, "I:n:c:p:l:u:NP:s:ei")) != -1) {
 		unsigned int new_scope_id;
 		switch(opt) {
 			case 'I':
@@ -209,8 +235,11 @@ int main(int argc, char **argv) {
 			case 's':
 				socketbox_listen = optarg;
 				break;
+			case 'i':
+				do_proxy_protocol = 1;
+				break;
 			default:
-				fprintf(stderr, "%s [-I interface] [-n interface_id] [-c connect_addr] [-p connect_port] [-l listen_fd] [-u unix_socket] [-N (nat64_range)]\n", argv[0]);
+				fprintf(stderr, "%s [-I interface] [-n interface_id] [-c connect_addr] [-p connect_port] [-l listen_fd] [-u unix_socket] [-N (nat64_range)] [-i (enable proxy protocol)]\n", argv[0]);
 				return 1;
 				break;
 		}
@@ -359,6 +388,13 @@ int main(int argc, char **argv) {
 								connect_deferred = 1;
 							} else {
 								perror("connect");
+								close(newfd);
+								close(new_socket_fd);
+								break;
+							}
+						}
+						if (do_proxy_protocol) {
+							if (send_proxy_protocol(newfd, new_socket_fd)) {
 								close(newfd);
 								close(new_socket_fd);
 								break;
