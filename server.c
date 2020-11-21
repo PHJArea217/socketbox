@@ -98,6 +98,11 @@ int main(int argc, char **argv) {
 		perror("listen");
 		return 1;
 	}
+	int send_socket = socket(AF_UNIX, SOCK_DGRAM, 0);
+	if (send_socket == -1) {
+		perror("socket");
+		return 1;
+	}
 	while (1) {
 		struct skbox_ip_port_tuple current_connection = {0};
 		struct sockaddr_in6 remote_addr = {0};
@@ -127,16 +132,13 @@ int main(int argc, char **argv) {
 					}
 					break;
 				case SKBOX_ACTION_SOCKET:
-					;int send_socket = socket(AF_UNIX, SOCK_DGRAM, 0);
-					if (send_socket == -1) break;
 					if (skbox_send_fd(send_socket, new_fd, (struct sockaddr *) result_action->action.name, sizeof(struct sockaddr_un))) {
-//						perror("sendmsg");
 					}
-					close(send_socket);
 					break;
 			}
 		}
 		close(new_fd);
 	}
+	close(send_socket);
 	return 1;
 }
