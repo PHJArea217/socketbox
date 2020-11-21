@@ -110,7 +110,7 @@ int main(int argc, char **argv) {
 		int new_fd = accept(server_socket_fd, (struct sockaddr *) &remote_addr, &l);
 		if (new_fd == -1) {
 			perror("accept");
-			break;
+			continue;
 		}
 		if (l == sizeof(struct sockaddr_in6) && remote_addr.sin6_family == AF_INET6) {
 			memcpy(&current_connection.remote_addr, &remote_addr.sin6_addr, sizeof(struct in6_addr));
