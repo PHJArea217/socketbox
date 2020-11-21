@@ -192,7 +192,8 @@ int main(int argc, char **argv) {
 	const char *socketbox_listen = NULL;
 	int recvmsg_only = 0;
 	int do_proxy_protocol = 0;
-	while ((opt = getopt(argc, argv, "I:n:c:p:l:u:NP:s:ei")) != -1) {
+	int extended_mode = 0;
+	while ((opt = getopt(argc, argv, "I:n:c:p:l:u:NxP:s:ei")) != -1) {
 		unsigned int new_scope_id;
 		switch(opt) {
 			case 'I':
@@ -238,8 +239,11 @@ int main(int argc, char **argv) {
 			case 'i':
 				do_proxy_protocol = 1;
 				break;
+			case 'x':
+				extended_mode = 1;
+				break;
 			default:
-				fprintf(stderr, "%s [-I interface] [-n interface_id] [-c connect_addr] [-p connect_port] [-l listen_fd] [-u unix_socket] [-N (nat64_range)] [-i (enable proxy protocol)]\n", argv[0]);
+				fprintf(stderr, "%s [-I interface] [-n interface_id] [-c connect_addr] [-p connect_port] [-l listen_fd] [-u unix_socket] [-N (nat64_range)] [-i (enable proxy protocol)] [-x (/64 instead of /96 for NAT64 mode]\n", argv[0]);
 				return 1;
 				break;
 		}
@@ -367,7 +371,7 @@ int main(int argc, char **argv) {
 							uint16_t last_port = conn_local_addr.sin6_port;
 							if ((conn_local_addr.sin6_addr.s6_addr32[0] == nat64_addr.s6_addr32[0])
 									&& (conn_local_addr.sin6_addr.s6_addr32[1] == nat64_addr.s6_addr32[1])
-									&& (conn_local_addr.sin6_addr.s6_addr32[2] == nat64_addr.s6_addr32[2])) {
+									&& (extended_mode || (conn_local_addr.sin6_addr.s6_addr32[2] == nat64_addr.s6_addr32[2]))) {
 							} else {
 								close(newfd);
 								close(new_socket_fd);
@@ -376,6 +380,9 @@ int main(int argc, char **argv) {
 							memcpy(&new_addr, &remote_addr, sizeof(struct sockaddr_in6));
 							if (remote_addr.sin6_port == 0) {
 								new_addr.sin6_port = last_port;
+							}
+							if (extended_mode) {
+								new_addr.sin6_addr.s6_addr32[2] = conn_local_addr.sin6_addr.s6_addr32[2];
 							}
 							new_addr.sin6_addr.s6_addr32[3] = last_4octet;
 						} else {
