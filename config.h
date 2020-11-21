@@ -10,3 +10,4 @@ struct skbox_config {
 	uint16_t continue_entry;
 };
 struct skbox_config *skbox_parse_config(FILE *input_file);
+void skbox_sort_maps(struct skbox_config *config);

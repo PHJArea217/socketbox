@@ -93,6 +93,7 @@ int main(int argc, char **argv) {
 		fprintf(stderr, "Error parsing configuration file\n");
 		return 1;
 	}
+	skbox_sort_maps(my_config);
 	if (listen(server_socket_fd, 100)) {
 		perror("listen");
 		return 1;
