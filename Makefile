@@ -11,7 +11,7 @@ send-receive-fd: send-receive-fd.o unix_scm_rights.o
 socket-query: socket-query.o
 	gcc $(LDFLAGS) -g -o $@ $^
 libsocketbox-preload.so: socketbox-preload.o unix_scm_rights.o libsocketbox.o
-	gcc -shared $(LDFLAGS) -g -o $@ $^
+	gcc -shared $(LDFLAGS) -g -o $@ $^ -ldl
 %.o: %.c
 	gcc $(CFLAGS) -g -c -o $@ $<
 clean:

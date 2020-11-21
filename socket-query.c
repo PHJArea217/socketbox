@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
 		case Q_REMOTE_ADDR:
 		case Q_REMOTE_PORT:
 		case Q_REMOTE_ALL:
-			if (getpeername(socket_num, &result, &l) || result.sin6_family != AF_INET6) {
+			if (getpeername(socket_num, (struct sockaddr *) &result, &l) || result.sin6_family != AF_INET6) {
 				perror("getpeername");
 				return 1;
 			}
@@ -63,17 +63,17 @@ int main(int argc, char **argv) {
 		case Q_LOCAL_ADDR:
 		case Q_LOCAL_PORT:
 		case Q_LOCAL_ALL:
-			if (getsockname(socket_num, &result, &l) || result.sin6_family != AF_INET6) {
+			if (getsockname(socket_num, (struct sockaddr *) &result, &l) || result.sin6_family != AF_INET6) {
 				perror("getsockname");
 				return 1;
 			}
 			break;
 		default:
-			if (getpeername(socket_num, &result, &l) || result.sin6_family != AF_INET6) {
+			if (getpeername(socket_num, (struct sockaddr *) &result, &l) || result.sin6_family != AF_INET6) {
 				perror("getpeername");
 				return 1;
 			}
-			if (getsockname(socket_num, &result2, &l2) || result2.sin6_family != AF_INET6) {
+			if (getsockname(socket_num, (struct sockaddr *) &result2, &l2) || result2.sin6_family != AF_INET6) {
 				perror("getsockname");
 				return 1;
 			}
