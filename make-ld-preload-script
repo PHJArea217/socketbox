@@ -1,0 +1,3 @@
+#!/bin/sh
+
+printf '#!/bin/sh\nexec LD_PRELOAD=%s/%s SKBOX_DIRECTORY_ROOT=/run/socketbox-conf "$@"\n' "$PWD" "$1"

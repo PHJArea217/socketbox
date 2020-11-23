@@ -10,11 +10,13 @@
 #include <sys/un.h>
 #include <dlfcn.h>
 #include <netinet/in.h>
+#include <limits.h>
 #include <syscall.h>
 static int (*real_bind)(int, const struct sockaddr *, socklen_t) = NULL;
 static int (*real_listen)(int, int) = NULL;
 static int (*real_accept4)(int, struct sockaddr *, socklen_t *, int) = NULL;
 volatile static int directory_fd = -1;
+static char directory_path[PATH_MAX+1] = {0};
 /*
 static const char *prefixes[] = {
 	"./skbox-",
@@ -77,11 +79,18 @@ int bind(int fd, const struct sockaddr *addr, socklen_t len) {
 	/* Middle 64 bits are reserved for future use. Check that they're zero for the moment. */
 	if (addr6->sin6_addr.s6_addr32[1]) goto do_real_bind;
 	if (addr6->sin6_addr.s6_addr32[2]) goto do_real_bind;
-
+	if (directory_fd != -10) goto do_real_bind;
+	__sync_synchronize();
 	uint16_t dir_file = ntohs(addr6->sin6_addr.s6_addr16[6]);
-	char filename[20] = "skbox_dir_XXXXX\0";
-	int16tonum(dir_file, &filename[10]);
-	int lookup_fd = openat(directory_fd, filename, O_RDONLY | O_CLOEXEC | O_NOCTTY);
+	char filename[20] = "/skbox_dir_XXXXX\0";
+	int16tonum(dir_file, &filename[11]);
+
+	char directory_full_path[PATH_MAX + 1] = {0};
+	strncpy(directory_full_path, directory_path, PATH_MAX);
+	strncat(directory_full_path, filename, PATH_MAX);
+	if (directory_full_path[PATH_MAX - 1]) goto do_real_bind;
+
+	int lookup_fd = open(directory_full_path, O_RDONLY | O_CLOEXEC | O_NOCTTY);
 	if (lookup_fd == -1) return -1;
 
 	uint16_t offset = ntohs(addr6->sin6_addr.s6_addr16[7]);
@@ -121,6 +130,12 @@ int bind(int fd, const struct sockaddr *addr, socklen_t len) {
 		return -1;
 	}
 bind_succeeded:
+	if (1) { /* FIXME: make this selectable; most cases require 0660 so it's not that big of a deal; use directory permissions instead. */
+		char socket_string[sizeof(result.sun_path) + 1] = {0};
+		memcpy(socket_string, result.sun_path, sizeof(result.sun_path));
+		socket_string[sizeof(result.sun_path)] = 0;
+		chmod(socket_string, 0660);
+	}
 	/* And replace the original socket under the hood */
 	if (dup3(new_socket_fd, fd, (orig_flags2 & FD_CLOEXEC) ? O_CLOEXEC : 0) != fd) {
 		close(new_socket_fd);
@@ -249,9 +264,20 @@ void __socketbox_preload_init(void) {
 	if (!real_accept4) abort();
 	char *directory = getenv("SKBOX_DIRECTORY_ROOT");
 	if (directory) {
-		int f = open(directory, O_RDONLY|O_DIRECTORY|O_CLOEXEC);
-		if (f >= 0) {
-			directory_fd = f;
+		if (strlen(directory) < PATH_MAX) {
+			strncpy(directory_path, directory, PATH_MAX);
+			__sync_synchronize();
+			directory_fd = -10;
 		}
+#if 0
+		if (fcntl(950, F_GETFD) == -1) {
+			int f = open(directory, O_RDONLY|O_DIRECTORY|O_CLOEXEC);
+			if (f >= 0) {
+				int new_fd = dup3(f, 950, O_CLOEXEC);
+				close(f);
+				directory_fd = new_fd;
+			}
+		}
+#endif
 	}
 }
