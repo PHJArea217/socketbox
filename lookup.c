@@ -25,8 +25,10 @@ const struct skbox_action *skbox_find_action_for_map(const struct skbox_ip_port_
 		if (bsearch_res == 0) {
 			return &mb_elem->action;
 		} else if (bsearch_res < 0) {
+			if (rb == mb) return &map->default_action;
 			rb = mb;
 		} else {
+			if (lb == mb) return &map->default_action;
 			lb = mb;
 		}
 	}

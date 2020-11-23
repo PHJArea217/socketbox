@@ -314,8 +314,8 @@ static struct config_token config_options[] = {
 	{"jump-unix", jump_unix_handler}, //
 	{"map-set", map_set_handler}, //
 	{"match-lip", match_lip_handler},
-	{"match-rip", match_rip_handler},
 	{"match-lport", match_lport_handler},
+	{"match-rip", match_rip_handler},
 	{"match-rport", match_rport_handler},
 	{"max-maps", max_maps_handler}, //
 	{"max-rules", max_rules_handler}, //
