@@ -28,8 +28,9 @@ int main(int argc, char **argv) {
 	gid_t *group_list = malloc(NGROUPS_MAX * sizeof(gid_t));
 	char *chroot_dir = NULL;
 	struct skbox_action *forced_action = NULL;
+	int do_daemon = 0;
 	/* FIXME: nsenter + enter user namespace */
-	while ((opt = getopt(argc, argv, "+f:l:p:tFRrs:eu:g:G:kx:S:i:")) >= 0) {
+	while ((opt = getopt(argc, argv, "+f:l:p:tFRrs:eu:g:G:kdx:S:i:")) >= 0) {
 		switch(opt) {
 			case 'f':
 				config_file = optarg;
@@ -119,6 +120,9 @@ int main(int argc, char **argv) {
 			case 'x':
 				chroot_dir = optarg;
 				break;
+			case 'd':
+				do_daemon = 1;
+				break;
 			case 'S':
 				if (forced_action) {
 					if (forced_action->type == SKBOX_ACTION_SOCKET) free(forced_action->action.name);
@@ -164,10 +168,15 @@ int main(int argc, char **argv) {
 			return 1;
 		}
 	}
+	if (do_daemon) {
+		if (daemon(0, 1)) {
+			return 1;
+		}
+	}
 	FILE *config_f = NULL;
 	if (!do_exec && !forced_action) config_f = fopen(config_file, "r");
 	if (chroot_dir) {
-		if (chroot(chroot_dir)) {
+		if (chroot(chroot_dir) || chdir("/")) {
 			perror("chroot");
 			return 1;
 		}
