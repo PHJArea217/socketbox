@@ -11,6 +11,7 @@
 #include <sys/prctl.h>
 #include <ctype.h>
 #include <limits.h>
+#include <errno.h>
 int main(int argc, char **argv) {
 	int server_socket_fd = -1;
 	struct in6_addr bind_addr = IN6ADDR_ANY_INIT;
@@ -242,6 +243,18 @@ int main(int argc, char **argv) {
 		socklen_t l = sizeof(struct sockaddr_in6);
 		int new_fd = accept(server_socket_fd, (struct sockaddr *) &remote_addr, &l);
 		if (new_fd == -1) {
+			switch (errno) {
+				case EAGAIN:
+				case EHOSTDOWN:
+				case EHOSTUNREACH:
+				case ENETDOWN:
+				case ENETUNREACH:
+				case ENONET:
+				case ENOPROTOOPT:
+				case EOPNOTSUPP:
+				case EPROTO:
+					continue;
+			}
 			perror("accept");
 			continue;
 		}
