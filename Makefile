@@ -1,4 +1,4 @@
-CFLAGS ?= -fvisibility=hidden -Wall
+CFLAGS ?= -fvisibility=hidden -Wall -O2
 all: socketbox socketbox-inetd socketbox-relay send-receive-fd socket-query libsocketbox-preload.so run-with-socketbox
 socketbox: unix_scm_rights.o config_parser.o server.o lookup.o
 	gcc $(LDFLAGS) -g -o $@ $^
