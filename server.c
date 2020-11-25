@@ -8,6 +8,7 @@
 #include <netinet/in.h>
 #include <pwd.h>
 #include <grp.h>
+#include <sys/prctl.h>
 #include <ctype.h>
 #include <limits.h>
 int main(int argc, char **argv) {
@@ -207,6 +208,10 @@ int main(int argc, char **argv) {
 		if (setenv("SKBOX_LISTEN_FD", tmpbuf, 1)) return 1;
 		execvp(argv[optind], &argv[optind]);
 		return 127;
+	}
+	if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)) {
+		perror("prctl");
+		return 1;
 	}
 	struct skbox_config *my_config = NULL;
 	if (!forced_action) {
