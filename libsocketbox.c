@@ -3,13 +3,19 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/stat.h>
 int skbox_new(const char *pathname) {
 	int s = socket(AF_UNIX, SOCK_DGRAM, 0);
 	if (s == -1) return -1;
 	struct sockaddr_un addr = {AF_UNIX, {0}};
 	/* FIXME: abstract socket support and unlinking of socket */
-	strncpy(addr.sun_path, pathname, sizeof(addr.sun_path));
+	strncpy(addr.sun_path, pathname, sizeof(addr.sun_path) - 1);
+	addr.sun_path[sizeof(addr.sun_path) - 1] = 0;
 	if (bind(s, (struct sockaddr *) &addr, sizeof(addr))) {
+		close(s);
+		return -1;
+	}
+	if (chmod(addr.sun_path, 0660)) {
 		close(s);
 		return -1;
 	}
