@@ -55,3 +55,27 @@ achieve full native performance and see the client IP address
 socketbox is IPv6-only by design, since the AnyIP trick works best over IPv6
 due to its abundance of addresses. It can work with IPv4, as long as you
 prefix the address with ::ffff:.
+
+# Command-line options
+
+* -f[]: configuration file (default /etc/socketbox.conf)
+* -l[]: listen IPv6 address, usually INADDR6\_ANY (::) or a specific address
+specified by ```-j TPROXY --on-ip```
+* -p[]: Listening socket port number
+* -t: Set IPV6\_TRANSPARENT
+* -F: Set IPV6\_FREEBIND
+* -R: Clear SO\_REUSEADDR
+* -r: Set SO\_REUSEPORT
+* -s[]: Inherit socket from specified file descriptor. Useful if called from
+another program with an inherited file descriptor.
+* -e: Run the specified program instead of socketbox; envvar SKBOX_LISTEN_FD
+can be used to retrieve the inherited socket.
+* -u[]: Run as user/UID. The options specified by -u, -g, and -G must allow
+read/write access to any sockets provided in the configuration file.
+* -g[]: Run as group/GID
+* -G[]: List of groups to keep in supplementary group list.
+* -k: Don't change groups
+* -x[]: Chroot directory
+* -S[]: Just send it to the specified Unix domain socket instead of parsing
+rules
+* -i[]: Send it to the file descriptor instead of parsing rules

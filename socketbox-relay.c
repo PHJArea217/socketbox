@@ -184,7 +184,7 @@ int main(int argc, char **argv) {
 	int listen_fd = 0;
 	int opt = 0;
 	struct sockaddr_in6 remote_addr = {AF_INET6, htons(80), 0, IN6ADDR_LOOPBACK_INIT, 0};
-	struct in6_addr nat64_addr = {{0}};
+	struct in6_addr nat64_addr = {{{0}}};
 	nat64_addr.s6_addr32[0] = htonl(0x0064ff9b);
 	struct sockaddr_un remote_addr_unix = {AF_UNIX, {0}};
 	size_t remote_addr_unix_len = 0;
@@ -347,8 +347,9 @@ int main(int argc, char **argv) {
 								close(new_socket_fd);
 								break;
 							}
+							char *orig_pathname = remote_addr_unix.sun_path;
 							snprintf(new_address_unix.sun_path, sizeof(new_address_unix.sun_path),
-									"%s-%08x", remote_addr_unix.sun_path, ntohl(conn_local_addr.sin6_addr.s6_addr32[3]));
+									"%s-%08x", orig_pathname, ntohl(conn_local_addr.sin6_addr.s6_addr32[3]));
 							new_remote_addr_unix_len = strlen(new_address_unix.sun_path);
 						}
 						if (new_address_unix.sun_path[0] == '@') {

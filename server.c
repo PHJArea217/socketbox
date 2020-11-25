@@ -6,6 +6,10 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <pwd.h>
+#include <grp.h>
+#include <ctype.h>
+#include <limits.h>
 int main(int argc, char **argv) {
 	int server_socket_fd = -1;
 	struct in6_addr bind_addr = IN6ADDR_ANY_INIT;
@@ -17,8 +21,15 @@ int main(int argc, char **argv) {
 	int do_exec = 0;
 	const char *config_file = "/etc/socketbox.conf";
 	int opt = -1;
+	uid_t change_uid = -1;
+	gid_t change_gid = -1;
+	int keep_groups = 0;
+	int nr_groups = 0;
+	gid_t *group_list = malloc(NGROUPS_MAX * sizeof(gid_t));
+	char *chroot_dir = NULL;
+	struct skbox_action *forced_action = NULL;
 	/* FIXME: nsenter + enter user namespace */
-	while ((opt = getopt(argc, argv, "f:l:p:tFRrs:e")) >= 0) {
+	while ((opt = getopt(argc, argv, "+f:l:p:tFRrs:eu:g:G:kx:S:i:")) >= 0) {
 		switch(opt) {
 			case 'f':
 				config_file = optarg;
@@ -49,6 +60,84 @@ int main(int argc, char **argv) {
 			case 'e':
 				do_exec = 1;
 				break;
+			case 'u':
+				if (isdigit(optarg[0])) {
+					change_uid = strtoll(optarg, NULL, 0);
+				} else {
+					struct passwd *s = getpwnam(optarg);
+					if (s) {
+						change_uid = s->pw_uid;
+						if (change_gid == -1) change_gid = s->pw_gid;
+					} else {
+						fprintf(stderr, "User %s not found\n", optarg);
+						return 1;
+					}
+				}
+				break;
+			case 'g':
+				if (isdigit(optarg[0])) {
+					change_gid = strtoll(optarg, NULL, 0);
+				} else {
+					struct group *s = getgrnam(optarg);
+					if (s) {
+						change_gid = s->gr_gid;
+					} else {
+						fprintf(stderr, "Group %s not found\n", optarg);
+						return 1;
+					}
+				}
+				break;
+			case 'G':
+				nr_groups = 0;
+				char *d = strdup(optarg);
+				if (!d) return 1;
+				for (char *start = strtok(d, ","); start; start = strtok(NULL, ",")) {
+					gid_t gid_to_add = -1;
+					if (isdigit(start[0])) {
+						gid_to_add = strtoll(start, NULL, 0);
+					} else {
+						struct group *s = getgrnam(start);
+						if (s) {
+							gid_to_add = s->gr_gid;
+						} else {
+							fprintf(stderr, "Group %s not found\n", start);
+							return 1;
+						}
+					}
+					if (nr_groups >= NGROUPS_MAX) {
+						fprintf(stderr, "%s: too many groups\n", start);
+						return 1;
+					}
+					group_list[nr_groups++] = gid_to_add;
+				}
+				keep_groups = 2;
+				free(d);
+				break;
+			case 'k':
+				keep_groups = 1;
+				break;
+			case 'x':
+				chroot_dir = optarg;
+				break;
+			case 'S':
+				if (forced_action) {
+					if (forced_action->type == SKBOX_ACTION_SOCKET) free(forced_action->action.name);
+					free(forced_action);
+				}
+				forced_action = calloc(sizeof(struct skbox_action), 1);
+				forced_action->type = SKBOX_ACTION_SOCKET;
+				forced_action->action.name = calloc(sizeof(struct sockaddr_un), 1);
+				forced_action->action.name->sun_family = AF_UNIX;
+				strncpy(forced_action->action.name->sun_path, optarg, sizeof(((struct sockaddr_un *) 0)->sun_path));
+				break;
+			case 'i':
+				if (forced_action) {
+					if (forced_action->type == SKBOX_ACTION_SOCKET) free(forced_action->action.name);
+					free(forced_action);
+				}
+				forced_action = calloc(sizeof(struct skbox_action), 1);
+				forced_action->type = SKBOX_ACTION_FD;
+				forced_action->action.send_fd = atoi(optarg);
 			default:
 				/* FIXME: help text */
 				return 1;
@@ -75,6 +164,34 @@ int main(int argc, char **argv) {
 			return 1;
 		}
 	}
+	FILE *config_f = NULL;
+	if (!do_exec && !forced_action) config_f = fopen(config_file, "r");
+	if (chroot_dir) {
+		if (chroot(chroot_dir)) {
+			perror("chroot");
+			return 1;
+		}
+	}
+	/* 0: no -k or -G; 1: -k; 2: -G */
+	if ((keep_groups == 2) || (change_gid != -1 && keep_groups == 0)) {
+		if (setgroups(nr_groups, group_list)) {
+			perror("setgroups");
+			return 1;
+		}
+	}
+	free(group_list);
+	if (change_gid != -1) {
+		if (setgid(change_gid)) {
+			perror("setgid");
+			return 1;
+		}
+	}
+	if (change_uid != -1) {
+		if (setuid(change_uid)) {
+			perror("setuid");
+			return 1;
+		}
+	}
 	if (do_exec) {
 		char tmpbuf[40] = {0};
 		if (snprintf(tmpbuf, 40, "%d", server_socket_fd) < 0) return 1;
@@ -82,18 +199,20 @@ int main(int argc, char **argv) {
 		execvp(argv[optind], &argv[optind]);
 		return 127;
 	}
-	FILE *config_f = fopen(config_file, "r");
-	if (!config_f) {
-		perror(config_file);
-		return 1;
+	struct skbox_config *my_config = NULL;
+	if (!forced_action) {
+		if (!config_f) {
+			perror(config_file);
+			return 1;
+		}
+		my_config = skbox_parse_config(config_f);
+		fclose(config_f);
+		if (!my_config) {
+			fprintf(stderr, "Error parsing configuration file\n");
+			return 1;
+		}
+		skbox_sort_maps(my_config);
 	}
-	struct skbox_config *my_config = skbox_parse_config(config_f);
-	fclose(config_f);
-	if (!my_config) {
-		fprintf(stderr, "Error parsing configuration file\n");
-		return 1;
-	}
-	skbox_sort_maps(my_config);
 	if (listen(server_socket_fd, 100)) {
 		perror("listen");
 		return 1;
@@ -123,7 +242,7 @@ int main(int argc, char **argv) {
 			memcpy(&current_connection.local_addr, &local_addr.sin6_addr, sizeof(struct in6_addr));
 			current_connection.lport = ntohs(local_addr.sin6_port);
 		}
-		const struct skbox_action *result_action = skbox_iterative_lookup(&current_connection, my_config->rules, my_config->nr_rules, my_config->maps, my_config->nr_maps, 100);
+		const struct skbox_action *result_action = forced_action ? forced_action : skbox_iterative_lookup(&current_connection, my_config->rules, my_config->nr_rules, my_config->maps, my_config->nr_maps, 100);
 		if (result_action) {
 			switch(result_action->type) {
 				case SKBOX_ACTION_FD:
