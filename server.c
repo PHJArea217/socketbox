@@ -31,8 +31,9 @@ int main(int argc, char **argv) {
 	char *chroot_dir = NULL;
 	struct skbox_action *forced_action = NULL;
 	int do_daemon = 0;
+	int listen_backlog = 4096;
 	/* FIXME: nsenter + enter user namespace */
-	while ((opt = getopt(argc, argv, "+f:l:p:tFRrs:eu:g:G:kdx:S:i:")) >= 0) {
+	while ((opt = getopt(argc, argv, "+f:l:p:tFRrs:eu:g:G:kdx:S:i:b:")) >= 0) {
 		switch(opt) {
 			case 'f':
 				config_file = optarg;
@@ -144,6 +145,10 @@ int main(int argc, char **argv) {
 				forced_action = calloc(sizeof(struct skbox_action), 1);
 				forced_action->type = SKBOX_ACTION_FD;
 				forced_action->action.send_fd = atoi(optarg);
+				break;
+			case 'b':
+				listen_backlog = atoi(optarg);
+				break;
 			default:
 				/* FIXME: help text */
 				return 1;
@@ -228,7 +233,7 @@ int main(int argc, char **argv) {
 		}
 		skbox_sort_maps(my_config);
 	}
-	if (listen(server_socket_fd, 100)) {
+	if (listen(server_socket_fd, listen_backlog)) {
 		perror("listen");
 		return 1;
 	}
