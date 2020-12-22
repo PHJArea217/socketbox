@@ -20,6 +20,7 @@ int main(int argc, char **argv) {
 	int force_freebind = 0;
 	int force_reuseaddr = 1;
 	int force_reuseport = 0;
+	int clear_transparent = 0;
 	int do_exec = 0;
 	const char *config_file = "/etc/socketbox.conf";
 	int opt = -1;
@@ -33,7 +34,7 @@ int main(int argc, char **argv) {
 	int do_daemon = 0;
 	int listen_backlog = 4096;
 	/* FIXME: nsenter + enter user namespace */
-	while ((opt = getopt(argc, argv, "+f:l:p:tFRrs:eu:g:G:kdx:S:i:b:")) >= 0) {
+	while ((opt = getopt(argc, argv, "+f:l:p:tFRrs:eu:g:G:kdx:S:i:b:z")) >= 0) {
 		switch(opt) {
 			case 'f':
 				config_file = optarg;
@@ -149,6 +150,9 @@ int main(int argc, char **argv) {
 			case 'b':
 				listen_backlog = atoi(optarg);
 				break;
+			case 'z':
+				clear_transparent = 1;
+				break;
 			default:
 				/* FIXME: help text */
 				return 1;
@@ -263,7 +267,7 @@ int main(int argc, char **argv) {
 			perror("accept");
 			continue;
 		}
-//		if (force_transparent && setsockopt(new_fd, SOL_IPV6, IPV6_TRANSPARENT, &(int) {0}, sizeof(int))) {close(new_fd); continue;}
+		if (clear_transparent && setsockopt(new_fd, SOL_IPV6, IPV6_TRANSPARENT, &(int) {0}, sizeof(int))) {close(new_fd); continue;}
 		if (l == sizeof(struct sockaddr_in6) && remote_addr.sin6_family == AF_INET6) {
 			memcpy(&current_connection.remote_addr, &remote_addr.sin6_addr, sizeof(struct in6_addr));
 			current_connection.rport = ntohs(remote_addr.sin6_port);
