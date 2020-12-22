@@ -263,6 +263,7 @@ int main(int argc, char **argv) {
 			perror("accept");
 			continue;
 		}
+		if (setsockopt(new_fd, SOL_IPV6, IPV6_TRANSPARENT, &(int) {0}, sizeof(int))) {close(new_fd); continue;}
 		if (l == sizeof(struct sockaddr_in6) && remote_addr.sin6_family == AF_INET6) {
 			memcpy(&current_connection.remote_addr, &remote_addr.sin6_addr, sizeof(struct in6_addr));
 			current_connection.rport = ntohs(remote_addr.sin6_port);

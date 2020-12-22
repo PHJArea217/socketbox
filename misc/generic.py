@@ -20,6 +20,7 @@ unix_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM | socket.SOCK_NONB
 while True:
     (accept_socket, remote_addr) = rainbow_socket.accept()
     try:
+        accept_socket.setsockopt(41, 75, 0) # IPV6_TRANSPARENT
         (local_addr, local_port) = accept_socket.getsockname()
         local_addr_buffer = socket.inet_pton(socket.AF_INET6, local_addr)
         if local_addr_buffer[0:10] == my_addr:
