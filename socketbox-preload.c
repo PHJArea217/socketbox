@@ -17,6 +17,7 @@ static int (*real_listen)(int, int) = NULL;
 static int (*real_accept4)(int, struct sockaddr *, socklen_t *, int) = NULL;
 volatile static int directory_fd = -1;
 static char directory_path[PATH_MAX+1] = {0};
+static int enable_stealth_mode = 0;
 /*
 static const char *prefixes[] = {
 	"./skbox-",
@@ -78,7 +79,19 @@ int bind(int fd, const struct sockaddr *addr, socklen_t len) {
 	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN) != AF_INET6) goto do_real_bind;
 	/* Middle 64 bits are reserved for future use. Check that they're zero for the moment. */
 	if (addr6->sin6_addr.s6_addr32[1]) goto do_real_bind;
-	if (addr6->sin6_addr.s6_addr32[2]) goto do_real_bind;
+	// if (addr6->sin6_addr.s6_addr32[2]) goto do_real_bind;
+	uint32_t second_part_of_address = ntohl(addr6->sin6_addr.s6_addr32[2]);
+	int do_stream = 0;
+	switch (second_part_of_address) {
+		case 0:
+			break;
+		case 1:
+			do_stream = 1;
+			break;
+		default:
+			goto do_real_bind;
+			break;
+	}
 	if (directory_fd != -10) goto do_real_bind;
 	__sync_synchronize();
 	uint16_t dir_file = ntohs(addr6->sin6_addr.s6_addr16[6]);
@@ -113,7 +126,7 @@ int bind(int fd, const struct sockaddr *addr, socklen_t len) {
 	if (orig_flags2 == -1) return -1;
 
 	/* Actually do the bind to the unix socket */
-	int new_socket_fd = socket(AF_UNIX, SOCK_DGRAM|SOCK_CLOEXEC|((orig_flags & O_NONBLOCK) ? SOCK_NONBLOCK : 0), 0);
+	int new_socket_fd = socket(AF_UNIX, (do_stream ? SOCK_STREAM : SOCK_DGRAM)|SOCK_CLOEXEC|((orig_flags & O_NONBLOCK) ? SOCK_NONBLOCK : 0), 0);
 	if (new_socket_fd == -1) return -1;
 	if (real_bind(new_socket_fd, (struct sockaddr *) &result, sizeof(result))) {
 		if (errno == EADDRINUSE) {
@@ -226,6 +239,14 @@ real_listen:
 #endif
 __attribute__((visibility("default")))
 int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
+	socklen_t the_length = 0;
+	if (len) {
+		the_length = *len;
+		if (the_length < 0) {
+			errno = EINVAL;
+			return -1;
+		}
+	}
 	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_TYPE) != SOCK_DGRAM) goto real_accept;
 	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN) != AF_UNIX) return -1;
 	int new_fd = skbox_receive_fd_from_socket(fd);
@@ -238,7 +259,14 @@ int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
 	if (fcntl(new_fd, F_SETFL, (flags & SOCK_NONBLOCK) ? (orig_flags | O_NONBLOCK) : (orig_flags & ~O_NONBLOCK))) goto close_fail;
 	if (fcntl(new_fd, F_SETFD, (flags & SOCK_CLOEXEC) ? (orig_flags2 | FD_CLOEXEC) : (orig_flags2 & ~FD_CLOEXEC))) goto close_fail;
 	if (!!addr && !!len) {
-		if (getpeername(new_fd, addr, len)) {
+		if (enable_stealth_mode && (the_length > 0) && (skbox_getsockopt_integer(new_fd, SOL_SOCKET, SO_DOMAIN) == AF_UNIX)) {
+			struct sockaddr_in6 fake_addr = {.sin6_family = AF_INET6, .sin6_port = 0, .sin6_addr = {{{0}}}, .sin6_scope_id = 0, .sin6_flowinfo = 0};
+			fake_addr.sin6_addr.s6_addr[15] = 1;
+			size_t limit = sizeof(struct sockaddr_in6);
+			if (the_length < limit) limit = the_length;
+			memcpy(addr, &fake_addr, limit);
+			*len = sizeof(struct sockaddr_in6);
+		} else if (getpeername(new_fd, addr, len)) {
 			*len = 0;
 		}
 	}
@@ -262,6 +290,10 @@ void __socketbox_preload_init(void) {
 	if (!real_listen) abort();
 	real_accept4 = dlsym(RTLD_NEXT, "accept4");
 	if (!real_accept4) abort();
+	char *stealth_mode = getenv("SKBOX_STEALTH_MODE");
+	if (stealth_mode && (stealth_mode[0] == '1')) {
+		enable_stealth_mode = 1;
+	}
 	char *directory = getenv("SKBOX_DIRECTORY_ROOT");
 	if (directory) {
 		if (strlen(directory) < PATH_MAX) {
