@@ -77,6 +77,15 @@ int bind(int fd, const struct sockaddr *addr, socklen_t len) {
 	if (p_host >= 1024) goto do_real_bind;
 	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_TYPE) != SOCK_STREAM) goto do_real_bind;
 	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN) != AF_INET6) goto do_real_bind;
+	/* fix guacd bug */
+	int sock_domain = skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN);
+	switch(sock_domain) {
+		case AF_INET:
+		case AF_INET6:
+			break;
+		default:
+			goto do_real_bind;
+	}
 	/* Middle 64 bits are reserved for future use. Check that they're zero for the moment. */
 	if (addr6->sin6_addr.s6_addr32[1]) goto do_real_bind;
 	// if (addr6->sin6_addr.s6_addr32[2]) goto do_real_bind;
