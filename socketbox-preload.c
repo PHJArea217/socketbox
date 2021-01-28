@@ -20,6 +20,7 @@ volatile static int directory_fd = -1;
 static char directory_path[PATH_MAX+1] = {0};
 static int enable_stealth_mode = 0;
 static int enable_connect = 0;
+static int enable_override_scope_id = 0;
 /*
 static const char *prefixes[] = {
 	"./skbox-",
@@ -65,7 +66,7 @@ static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, i
 	if (len != sizeof(struct sockaddr_in6)) goto do_real_bind;
 	if (addr->sa_family != AF_INET6) goto do_real_bind;
 	const struct sockaddr_in6 *addr6 = (const struct sockaddr_in6 *) addr;
-	if (addr6->sin6_scope_id) goto do_real_bind;
+	if (!enable_override_scope_id && !!addr6->sin6_scope_id) goto do_real_bind;
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 	if (addr6->sin6_addr.s6_addr32[0] == 0x01008ffe) return bind_to_ll(fd, addr6, is_connect);
 	if (addr6->sin6_addr.s6_addr32[0] != 0x8ffe) goto do_real_bind;
@@ -299,6 +300,10 @@ void __socketbox_preload_init(void) {
 	stealth_mode = getenv("SKBOX_ENABLE_CONNECT");
 	if (stealth_mode && (stealth_mode[0] >= '1') && (stealth_mode[0] <= '2')) {
 		enable_connect = stealth_mode[0] - '0';
+	}
+	stealth_mode = getenv("SKBOX_CLEAR_SCOPE_ID");
+	if (stealth_mode && (stealth_mode[0] == '1')) {
+		enable_override_scope_id = 1;
 	}
 	char *directory = getenv("SKBOX_DIRECTORY_ROOT");
 	if (directory) {
