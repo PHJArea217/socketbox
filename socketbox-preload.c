@@ -21,6 +21,7 @@ static char directory_path[PATH_MAX+1] = {0};
 static int enable_stealth_mode = 0;
 static int enable_connect = 0;
 static int enable_override_scope_id = 0;
+static int enable_accept_hack = 0;
 /*
 static const char *prefixes[] = {
 	"./skbox-",
@@ -273,7 +274,15 @@ int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
 	}
 	return new_fd;
 real_accept:
-	return real_accept4(fd, addr, len, flags);
+	if ((len == NULL) || (*len == 0)) return real_accept4(fd, addr, len, flags);
+	socklen_t orig_len = *len;
+	int rv = real_accept4(fd, addr, len, flags);
+	if ((rv >= 0) && ((*len) > 0) && (orig_len > 0) && ((*len) < orig_len)) {
+		/* Zero out the excess buffer, to prevent any data leakage
+		 * from not expecting the right address length */
+		memset(&((char *)addr)[*len], 0, orig_len - (*len));
+	}
+	return rv;
 close_fail:
 	close(new_fd);
 	return -1;
@@ -298,12 +307,16 @@ void __socketbox_preload_init(void) {
 		enable_stealth_mode = 1;
 	}
 	stealth_mode = getenv("SKBOX_ENABLE_CONNECT");
-	if (stealth_mode && (stealth_mode[0] >= '1') && (stealth_mode[0] <= '2')) {
+	if (stealth_mode && (stealth_mode[0] >= '1') && (stealth_mode[0] <= '9')) {
 		enable_connect = stealth_mode[0] - '0';
 	}
 	stealth_mode = getenv("SKBOX_CLEAR_SCOPE_ID");
 	if (stealth_mode && (stealth_mode[0] == '1')) {
 		enable_override_scope_id = 1;
+	}
+	stealth_mode = getenv("SKBOX_ACCEPT_HACK");
+	if (stealth_mode && (stealth_mode[0] >= '1') && (stealth_mode[0] <= '9')) {
+		enable_accept_hack = stealth_mode[0] - '0';
 	}
 	char *directory = getenv("SKBOX_DIRECTORY_ROOT");
 	if (directory) {
