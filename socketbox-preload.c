@@ -13,11 +13,13 @@
 #include <limits.h>
 #include <syscall.h>
 static int (*real_bind)(int, const struct sockaddr *, socklen_t) = NULL;
+static int (*real_connect)(int, const struct sockaddr *, socklen_t) = NULL;
 static int (*real_listen)(int, int) = NULL;
 static int (*real_accept4)(int, struct sockaddr *, socklen_t *, int) = NULL;
 volatile static int directory_fd = -1;
 static char directory_path[PATH_MAX+1] = {0};
 static int enable_stealth_mode = 0;
+static int enable_connect = 0;
 /*
 static const char *prefixes[] = {
 	"./skbox-",
@@ -39,22 +41,24 @@ static void int16tonum(uint16_t num, char *result) {
 	result[0] = numbers[num % 10];
 }
 /* Preconditions: sin6_scope_id == 0, sin6_addr in fe8f:1::/32 */
-static int bind_to_ll(int fd, const struct sockaddr_in6 *addr) {
+static int bind_to_ll(int fd, const struct sockaddr_in6 *addr, int is_connect) {
 	struct sockaddr_in6 modified_address;
 	memcpy(&modified_address, addr, sizeof(struct sockaddr_in6));
 	modified_address.sin6_scope_id = ntohl(addr->sin6_addr.s6_addr32[1]);
 	memcpy(&modified_address.sin6_addr, "\376\200\0\0\0\0\0\0", 8); /* fe80::/64 */
+	if (is_connect) {
+		return real_connect(fd, (struct sockaddr *) &modified_address, sizeof(modified_address));
+	}
 	return real_bind(fd, (struct sockaddr *) &modified_address, sizeof(modified_address));
 }
-__attribute__((visibility("default")))
-int bind(int fd, const struct sockaddr *addr, socklen_t len) {
+static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, int is_connect) {
 	/* We should only act on a very narrow set of circumstances:
 	 * addr actually represents an AF_INET6 socket address
 	 * sin6_scope_id is zero
 	 * sin6_addr is in fe8f::/32
 	 * If sin6_addr is in fe8f:1::/32 at this point, do the other routine.
 	 * sin6_port is nonzero and less than 1024
-	 * socket's domain is AF_INET6
+	 * socket's domain is AF_INET6 or AF_INET
 	 * socket's type is SOCK_STREAM
 	 * FIXME: link local connect hack
 	 */
@@ -63,10 +67,10 @@ int bind(int fd, const struct sockaddr *addr, socklen_t len) {
 	const struct sockaddr_in6 *addr6 = (const struct sockaddr_in6 *) addr;
 	if (addr6->sin6_scope_id) goto do_real_bind;
 #if __BYTE_ORDER == __LITTLE_ENDIAN
-	if (addr6->sin6_addr.s6_addr32[0] == 0x01008ffe) return bind_to_ll(fd, addr6);
+	if (addr6->sin6_addr.s6_addr32[0] == 0x01008ffe) return bind_to_ll(fd, addr6, is_connect);
 	if (addr6->sin6_addr.s6_addr32[0] != 0x8ffe) goto do_real_bind;
 #elif __BYTE_ORDER == __BIG_ENDIAN
-	if (addr6->sin6_addr.s6_addr32[0] == 0xfe8f0001) return bind_to_ll(fd, addr6);
+	if (addr6->sin6_addr.s6_addr32[0] == 0xfe8f0001) return bind_to_ll(fd, addr6, is_connect);
 	if (addr6->sin6_addr.s6_addr32[0] != 0xfe8f0000) goto do_real_bind;
 #else
 #error Whatever
@@ -74,7 +78,7 @@ int bind(int fd, const struct sockaddr *addr, socklen_t len) {
 	if (directory_fd == -1) goto do_real_bind;
 	if (!addr6->sin6_port) goto do_real_bind;
 	uint16_t p_host = ntohs(addr6->sin6_port);
-	if (p_host >= 1024) goto do_real_bind;
+	if ((!is_connect) && ((p_host == 0) || (p_host >= 1024))) goto do_real_bind;
 	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_TYPE) != SOCK_STREAM) goto do_real_bind;
 	/* if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN) != AF_INET6) goto do_real_bind; */
 	/* fix guacd bug */
@@ -134,8 +138,50 @@ int bind(int fd, const struct sockaddr *addr, socklen_t len) {
 	if (orig_flags == -1) return -1;
 	if (orig_flags2 == -1) return -1;
 
+	int new_socket_fd = -1;
+	if (is_connect) {
+		/* "Connect" to the requested socket address */
+		if (do_stream) {
+			/* Easy: simply connect to the socket */
+			new_socket_fd = socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC|((orig_flags & O_NONBLOCK) ? SOCK_NONBLOCK : 0), 0);
+			if (new_socket_fd == -1) return -1;
+			if (real_connect(new_socket_fd, (struct sockaddr *) &result, sizeof(result)) == 0) goto connect_succeeded;
+		} else {
+			if (enable_connect >= 2) {
+				/* This is a bit more interesting. Create a socketpair, simulating a connection.
+				 * Return one end as the "connected socket", the other side goes to the actual unix socket,
+				 * just like how socketbox itself would operate */
+				int dgram_socket = socket(AF_UNIX, SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC, 0);
+				if (dgram_socket == -1) return -1;
+				int my_sockets[2] = {-1, -1};
+				if (socketpair(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0, my_sockets)) {
+					close(dgram_socket);
+					return -1;
+				}
+				if ((!!(orig_flags & O_NONBLOCK)) && skbox_make_fd_nonblocking(my_sockets[0])) {
+					close(dgram_socket);
+					close(my_sockets[1]);
+					close(my_sockets[0]);
+					return -1;
+				}
+				int send_result = skbox_send_fd(dgram_socket, my_sockets[1], (struct sockaddr *) &result, sizeof(result));
+				if (send_result == 0) {
+					close(dgram_socket);
+					close(my_sockets[1]);
+					new_socket_fd = my_sockets[0];
+					goto connect_succeeded;
+				}
+				close(dgram_socket);
+				close(my_sockets[1]);
+				close(my_sockets[0]);
+			} else {
+				errno = EINVAL;
+			}
+		}
+		return -1;
+	}
 	/* Actually do the bind to the unix socket */
-	int new_socket_fd = socket(AF_UNIX, (do_stream ? SOCK_STREAM : SOCK_DGRAM)|SOCK_CLOEXEC|((orig_flags & O_NONBLOCK) ? SOCK_NONBLOCK : 0), 0);
+	new_socket_fd = socket(AF_UNIX, (do_stream ? SOCK_STREAM : SOCK_DGRAM)|SOCK_CLOEXEC|((orig_flags & O_NONBLOCK) ? SOCK_NONBLOCK : 0), 0);
 	if (new_socket_fd == -1) return -1;
 	if (real_bind(new_socket_fd, (struct sockaddr *) &result, sizeof(result))) {
 		if (errno == EADDRINUSE) {
@@ -158,6 +204,7 @@ bind_succeeded:
 		socket_string[sizeof(result.sun_path)] = 0;
 		chmod(socket_string, 0660);
 	}
+connect_succeeded:
 	/* And replace the original socket under the hood */
 	if (dup3(new_socket_fd, fd, (orig_flags2 & FD_CLOEXEC) ? O_CLOEXEC : 0) != fd) {
 		close(new_socket_fd);
@@ -166,7 +213,21 @@ bind_succeeded:
 	close(new_socket_fd);
 	return 0;
 do_real_bind:
+	if (is_connect) {
+		return real_connect(fd, addr, len);
+	}
 	return real_bind(fd, addr, len);
+}
+__attribute__((visibility("default")))
+int bind(int fd, const struct sockaddr *addr, socklen_t len) {
+	return my_bind_connect(fd, addr, len, 0);
+}
+__attribute__((visibility("default")))
+int connect(int fd, const struct sockaddr *addr, socklen_t len) {
+	if (!enable_connect) {
+		return real_connect(fd, addr, len);
+	}
+	return my_bind_connect(fd, addr, len, 1);
 }
 __attribute__((visibility("default")))
 int listen(int fd, int backlog) {
@@ -176,76 +237,6 @@ int listen(int fd, int backlog) {
 	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN) != AF_UNIX) return real_listen(fd, backlog);
 	return 0;
 }
-#if 0
-int listen(int fd, int backlog) {
-	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_TYPE) != SOCK_STREAM) goto real_listen;
-	int orig_flags = fcntl(fd, F_GETFL, 0);
-	if (orig_flags == -1) goto real_listen;
-	int orig_flags2 = fcntl(fd, F_GETFD, 0);
-	if (orig_flags2 == -1) goto real_listen;
-	struct sockaddr_storage orig_bindaddr = {0};
-	socklen_t bindaddr_len = sizeof(orig_bindaddr);
-	getsockname(fd, (struct sockaddr *) &orig_bindaddr, &bindaddr_len);
-	switch(orig_bindaddr.ss_family) {
-		case AF_UNIX:
-			;struct sockaddr_un *u = (struct sockaddr_un *) &orig_bindaddr;
-			char *repl = memmem(u->sun_path, sizeof(u->sun_path), "__SKBOX1__", 10);
-			if (repl) {
-				int new_socket = socket(AF_UNIX, SOCK_DGRAM
-						| (orig_flags & O_NONBLOCK ? SOCK_NONBLOCK : 0)
-						| (orig_flags2 & FD_CLOEXEC ? SOCK_CLOEXEC : 0), 0);
-				if (new_socket == -1) return -1;
-				repl[7] = 'T';
-				if (bind(new_socket, u, sizeof(struct sockaddr_un))) {
-					close(new_socket);
-					return -1;
-				}
-				if (dup3(new_socket, fd, orig_flags2 & FD_CLOEXEC ? O_CLOEXEC : 0) != fd) {
-					close(new_socket);
-					return -1;
-				}
-				close(new_socket);
-				return 0;
-			}
-			break;
-		case AF_INET6:
-			;struct sockaddr_in6 *i = (struct sockaddr_in6 *) &orig_bindaddr;
-			
-			if (memcmp(&i->sin6_addr, "\0\0\0\0\0\0\0\0\0\0\377\377\177\177", 14)) break;
-			uint8_t req_class = i->sin6_addr.s6_addr[14];
-			if (req_class >= (sizeof(prefixes)/sizeof(prefixes[0]))) break;
-
-			char appended_string[] = "000000\0";
-			const char hexdigits[] = "0123456789abcdef";
-			appended_string[0] = hexdigits[((uint8_t) i->sin6_addr.s6_addr[15] >> 4) & 15];
-			appended_string[1] = hexdigits[((uint8_t) i->sin6_addr.s6_addr[15]) & 15];
-			appended_string[2] = hexdigits[((uint16_t) i->sin6_port >> 12) & 15];
-			appended_string[3] = hexdigits[((uint16_t) i->sin6_port >> 8) & 15];
-			appended_string[4] = hexdigits[((uint16_t) i->sin6_port >> 4) & 15];
-			appended_string[5] = hexdigits[((uint16_t) i->sin6_port) & 15];
-			struct sockaddr_un new_address = {AF_UNIX, {0}};
-			strncpy(new_address.sun_path, prefixes[req_class], sizeof(new_address.sun_path));
-			strncat(new_address.sun_path, appended_string, sizeof(new_address.sun_path));
-			int new_socket = socket(AF_UNIX, SOCK_DGRAM
-					| (orig_flags & O_NONBLOCK ? SOCK_NONBLOCK : 0)
-					| (orig_flags2 & FD_CLOEXEC ? SOCK_CLOEXEC : 0), 0);
-			if (new_socket == -1) return -1;
-			if (bind(new_socket, &new_address, sizeof(struct sockaddr_un))) {
-				close(new_socket);
-				return -1;
-			}
-			if (dup3(new_socket, fd, orig_flags2 & FD_CLOEXEC ? O_CLOEXEC : 0) != fd) {
-				close(new_socket);
-				return -1;
-			}
-			close(new_socket);
-			return 0;
-		/* TODO: AF_INET */
-	}
-real_listen:
-	return syscall(SYS_listen, fd, backlog);
-}
-#endif
 __attribute__((visibility("default")))
 int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
 	socklen_t the_length = 0;
@@ -297,11 +288,17 @@ void __socketbox_preload_init(void) {
 	if (!real_bind) abort();
 	real_listen = dlsym(RTLD_NEXT, "listen");
 	if (!real_listen) abort();
+	real_connect = dlsym(RTLD_NEXT, "connect");
+	if (!real_connect) abort();
 	real_accept4 = dlsym(RTLD_NEXT, "accept4");
 	if (!real_accept4) abort();
 	char *stealth_mode = getenv("SKBOX_STEALTH_MODE");
 	if (stealth_mode && (stealth_mode[0] == '1')) {
 		enable_stealth_mode = 1;
+	}
+	stealth_mode = getenv("SKBOX_ENABLE_CONNECT");
+	if (stealth_mode && (stealth_mode[0] >= '1') && (stealth_mode[0] <= '2')) {
+		enable_connect = stealth_mode[0] - '0';
 	}
 	char *directory = getenv("SKBOX_DIRECTORY_ROOT");
 	if (directory) {
