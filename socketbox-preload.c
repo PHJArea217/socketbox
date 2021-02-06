@@ -17,6 +17,8 @@ static int (*real_connect)(int, const struct sockaddr *, socklen_t) = NULL;
 static int (*real_listen)(int, int) = NULL;
 static int (*real_accept4)(int, struct sockaddr *, socklen_t *, int) = NULL;
 volatile static int directory_fd = -1;
+static char * volatile directory2_path = NULL;
+volatile static int has_directory2 = 0;
 static char directory_path[PATH_MAX+1] = {0};
 static int enable_stealth_mode = 0;
 static int enable_connect = 0;
@@ -41,6 +43,24 @@ static void int16tonum(uint16_t num, char *result) {
 	result[1] = numbers[num % 10];
 	num = num / 10;
 	result[0] = numbers[num % 10];
+}
+static size_t write_string_to_buf(char *buf, size_t n, const char *s1, const char *s2) {
+	size_t dptr = 0;
+	const char *a = s1;
+	const char *b = s2;
+	while (*a) {
+		if (dptr >= n) return dptr;
+		buf[dptr] = *a;
+		dptr++;
+		a++;
+	}
+	while (*b) {
+		if (dptr >= n) return dptr;
+		buf[dptr] = *b;
+		dptr++;
+		b++;
+	}
+	return dptr;
 }
 /* Preconditions: sin6_scope_id == 0, sin6_addr in fe8f:1::/32 */
 static int bind_to_ll(int fd, const struct sockaddr_in6 *addr, int is_connect) {
@@ -77,7 +97,6 @@ static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, i
 #else
 #error Whatever
 #endif
-	if (directory_fd == -1) goto do_real_bind;
 	if (!addr6->sin6_port) goto do_real_bind;
 	uint16_t p_host = ntohs(addr6->sin6_port);
 	if ((!is_connect) && ((p_host == 0) || (p_host >= 1024))) goto do_real_bind;
@@ -97,42 +116,69 @@ static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, i
 	// if (addr6->sin6_addr.s6_addr32[2]) goto do_real_bind;
 	uint32_t second_part_of_address = ntohl(addr6->sin6_addr.s6_addr32[2]);
 	int do_stream = 0;
+	int alt_mode = 0;
 	switch (second_part_of_address) {
 		case 0:
 			break;
 		case 1:
 			do_stream = 1;
 			break;
+		case 2:
+			alt_mode = 1;
+			break;
+		case 3:
+			alt_mode = 1;
+			do_stream = 1;
+			break;
 		default:
 			goto do_real_bind;
 			break;
 	}
-	if (directory_fd != -10) goto do_real_bind;
-	__sync_synchronize();
-	uint16_t dir_file = ntohs(addr6->sin6_addr.s6_addr16[6]);
-	char filename[20] = "/skbox_dir_XXXXX\0";
-	int16tonum(dir_file, &filename[11]);
-
-	char directory_full_path[PATH_MAX + 1] = {0};
-	strncpy(directory_full_path, directory_path, PATH_MAX);
-	strncat(directory_full_path, filename, PATH_MAX);
-	if (directory_full_path[PATH_MAX - 1]) goto do_real_bind;
-
-	int lookup_fd = open(directory_full_path, O_RDONLY | O_CLOEXEC | O_NOCTTY);
-	if (lookup_fd == -1) return -1;
-
-	uint16_t offset = ntohs(addr6->sin6_addr.s6_addr16[7]);
 	struct sockaddr_un result = {AF_UNIX, {0}};
-	if (pread(lookup_fd, result.sun_path, sizeof(result.sun_path), offset * 128) != sizeof(result.sun_path)) {
+	if (alt_mode) {
+		if (!has_directory2) goto do_real_bind;
+		__sync_synchronize();
+		char filename[20] = "/XXXXX/XXXXX_XXXXX\0";
+		int16tonum(ntohs(addr6->sin6_addr.s6_addr16[6]), &filename[1]);
+		int16tonum(ntohs(addr6->sin6_addr.s6_addr16[7]), &filename[7]);
+		int16tonum(p_host, &filename[13]);
+		write_string_to_buf(result.sun_path, sizeof(result.sun_path), directory2_path, filename);
+	} else {
+		if (directory_fd != -10) goto do_real_bind;
+		__sync_synchronize();
+		uint16_t dir_file = ntohs(addr6->sin6_addr.s6_addr16[6]);
+		char filename[20] = "/skbox_dir_XXXXX\0";
+		int16tonum(dir_file, &filename[11]);
+
+		char directory_full_path[PATH_MAX + 1] = {0};
+		size_t n = write_string_to_buf(directory_full_path, PATH_MAX, directory_path, filename);
+		directory_full_path[n] = 0;
+		/*
+		 * This might actually be a security vulnerability
+		 * if directory_path is longer than PATH_MAX-20 bytes.
+		 * Not remotely exploitable even if they have control of the bind address,
+		 * unless they also have arbitrary control of environment variables, and even in
+		 * the case of setuid/setgid, LD_PRELOAD is ignored.
+		strncpy(directory_full_path, directory_path, PATH_MAX);
+		strncat(directory_full_path, filename, PATH_MAX);
+		if (directory_full_path[PATH_MAX - 1]) goto do_real_bind;
+		*/
+
+		int lookup_fd = open(directory_full_path, O_RDONLY | O_CLOEXEC | O_NOCTTY);
+		if (lookup_fd == -1) return -1;
+
+		uint16_t offset = ntohs(addr6->sin6_addr.s6_addr16[7]);
+		if (pread(lookup_fd, result.sun_path, sizeof(result.sun_path), offset * 128) != sizeof(result.sun_path)) {
+			close(lookup_fd);
+			errno = ERANGE;
+			return -1;
+		}
 		close(lookup_fd);
-		errno = ERANGE;
-		return -1;
-	}
-	close(lookup_fd);
-	/* Replace _@SB_ with the actual given port number */
-	char *m = memmem(result.sun_path, sizeof(result.sun_path), "_@SB_", 5);
-	if (m) {
-		int16tonum(p_host, m);
+		/* Replace _@SB_ with the actual given port number */
+		char *m = memmem(result.sun_path, sizeof(result.sun_path), "_@SB_", 5);
+		if (m) {
+			int16tonum(p_host, m);
+		}
 	}
 	/* Try to inherit the original socket flags */
 	int orig_flags = fcntl(fd, F_GETFL, 0);
@@ -325,15 +371,13 @@ void __socketbox_preload_init(void) {
 			__sync_synchronize();
 			directory_fd = -10;
 		}
-#if 0
-		if (fcntl(950, F_GETFD) == -1) {
-			int f = open(directory, O_RDONLY|O_DIRECTORY|O_CLOEXEC);
-			if (f >= 0) {
-				int new_fd = dup3(f, 950, O_CLOEXEC);
-				close(f);
-				directory_fd = new_fd;
-			}
-		}
-#endif
+	}
+	char *directory2 = getenv("SKBOX_DIRECTORY_ROOT2");
+	if (directory2 && !directory2_path) {
+		char *new_value = strdup(directory2);
+		if (!new_value) abort();
+		directory2_path = new_value;
+		__sync_synchronize();
+		has_directory2 = 1;
 	}
 }
