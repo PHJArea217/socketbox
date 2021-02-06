@@ -16,6 +16,8 @@ static int (*real_bind)(int, const struct sockaddr *, socklen_t) = NULL;
 static int (*real_connect)(int, const struct sockaddr *, socklen_t) = NULL;
 static int (*real_listen)(int, int) = NULL;
 static int (*real_accept4)(int, struct sockaddr *, socklen_t *, int) = NULL;
+static int (*real_getsockname)(int, struct sockaddr *, socklen_t *) = NULL;
+static int (*real_getpeername)(int, struct sockaddr *, socklen_t *) = NULL;
 volatile static int directory_fd = -1;
 static char * volatile directory2_path = NULL;
 volatile static int has_directory2 = 0;
@@ -24,6 +26,7 @@ static int enable_stealth_mode = 0;
 static int enable_connect = 0;
 static int enable_override_scope_id = 0;
 static int enable_accept_hack = 0;
+static int enable_getpeername_protection = 2;
 /*
 static const char *prefixes[] = {
 	"./skbox-",
@@ -61,6 +64,34 @@ static size_t write_string_to_buf(char *buf, size_t n, const char *s1, const cha
 		b++;
 	}
 	return dptr;
+}
+__attribute__((visibility("default")))
+int getsockname(int fd, struct sockaddr *addr, socklen_t *len) {
+	if (enable_getpeername_protection) {
+		if ((!!addr) && (!!len)) {
+			socklen_t l = *len;
+			if (l > 0) {
+				if ((enable_getpeername_protection >= 2) || (l == sizeof(struct sockaddr_in)) || (l == sizeof(struct sockaddr_in6))) {
+					memset(addr, 0, l);
+				}
+			}
+		}
+	}
+	return real_getsockname(fd, addr, len);
+}
+__attribute__((visibility("default")))
+int getpeername(int fd, struct sockaddr *addr, socklen_t *len) {
+	if (enable_getpeername_protection) {
+		if ((!!addr) && (!!len)) {
+			socklen_t l = *len;
+			if (l > 0) {
+				if ((enable_getpeername_protection >= 2) || (l == sizeof(struct sockaddr_in)) || (l == sizeof(struct sockaddr_in6))) {
+					memset(addr, 0, l);
+				}
+			}
+		}
+	}
+	return real_getpeername(fd, addr, len);
 }
 /* Preconditions: sin6_scope_id == 0, sin6_addr in fe8f:1::/32 */
 static int bind_to_ll(int fd, const struct sockaddr_in6 *addr, int is_connect) {
@@ -307,6 +338,13 @@ int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
 	if (fcntl(new_fd, F_SETFL, (flags & SOCK_NONBLOCK) ? (orig_flags | O_NONBLOCK) : (orig_flags & ~O_NONBLOCK))) goto close_fail;
 	if (fcntl(new_fd, F_SETFD, (flags & SOCK_CLOEXEC) ? (orig_flags2 | FD_CLOEXEC) : (orig_flags2 & ~FD_CLOEXEC))) goto close_fail;
 	if (!!addr && !!len) {
+		if (enable_getpeername_protection) {
+			if (the_length > 0) {
+				if ((enable_getpeername_protection >= 2) || (the_length == sizeof(struct sockaddr_in)) || (the_length == sizeof(struct sockaddr_in6))) {
+					memset(addr, 0, the_length);
+				}
+			}
+		}
 		if (enable_stealth_mode && (the_length > 0) && (skbox_getsockopt_integer(new_fd, SOL_SOCKET, SO_DOMAIN) == AF_UNIX)) {
 			struct sockaddr_in6 fake_addr = {.sin6_family = AF_INET6, .sin6_port = 0, .sin6_addr = {{{0}}}, .sin6_scope_id = 0, .sin6_flowinfo = 0};
 			fake_addr.sin6_addr.s6_addr[15] = 1;
@@ -348,6 +386,10 @@ void __socketbox_preload_init(void) {
 	if (!real_connect) abort();
 	real_accept4 = dlsym(RTLD_NEXT, "accept4");
 	if (!real_accept4) abort();
+	real_getsockname = dlsym(RTLD_NEXT, "getsockname");
+	if (!real_getsockname) abort();
+	real_getpeername = dlsym(RTLD_NEXT, "getpeername");
+	if (!real_getpeername) abort();
 	char *stealth_mode = getenv("SKBOX_STEALTH_MODE");
 	if (stealth_mode && (stealth_mode[0] == '1')) {
 		enable_stealth_mode = 1;
@@ -379,5 +421,9 @@ void __socketbox_preload_init(void) {
 		directory2_path = new_value;
 		__sync_synchronize();
 		has_directory2 = 1;
+	}
+	stealth_mode = getenv("SKBOX_GETPEERNAME_PROTECTION");
+	if (stealth_mode && (stealth_mode[0] >= '0') && (stealth_mode[0] <= '9')) {
+		enable_getpeername_protection = stealth_mode[0] - '0';
 	}
 }
