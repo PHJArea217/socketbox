@@ -1,4 +1,5 @@
-CFLAGS ?= -fvisibility=hidden -Wall -O2
+CFLAGS ?= -fvisibility=hidden -Wall -O2 -fstack-protector-strong -D_FORTIFY_SOURCE=2
+LDFLAGS ?= -Wl,-z,relro -Wl,-z,now
 all: socketbox socketbox-inetd socketbox-relay send-receive-fd socket-query libsocketbox-preload.so run-with-socketbox
 socketbox: unix_scm_rights.o config_parser.o server.o lookup.o
 	gcc $(LDFLAGS) -g -o $@ $^
