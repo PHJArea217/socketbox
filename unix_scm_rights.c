@@ -4,10 +4,10 @@
 #include <string.h>
 #include <stddef.h>
 int skbox_receive_fd_from_socket(int fd) {
-	char data[4096] = {0};
-	char anc_data[4096] = {0};
+	char data[128] = {0};
+	char anc_data[1280] = {0};
 	while (1) {
-		struct msghdr m = {NULL, 0, &(struct iovec) {data, 4096}, 1, anc_data, 4096, 0};
+		struct msghdr m = {NULL, 0, &(struct iovec) {data, 128}, 1, anc_data, 1280, 0};
 		ssize_t r = recvmsg(fd, &m, MSG_CMSG_CLOEXEC);
 		if (r <= 0) break;
 		for (struct cmsghdr *c = CMSG_FIRSTHDR(&m); c; c = CMSG_NXTHDR(&m, c)) {
