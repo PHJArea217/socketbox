@@ -12,6 +12,7 @@
 #include <netinet/in.h>
 #include <limits.h>
 #include <syscall.h>
+#define SKBOX_PATH_MAX 256
 static int (*real_bind)(int, const struct sockaddr *, socklen_t) = NULL;
 static int (*real_connect)(int, const struct sockaddr *, socklen_t) = NULL;
 static int (*real_listen)(int, int) = NULL;
@@ -21,7 +22,7 @@ static int (*real_getpeername)(int, struct sockaddr *, socklen_t *) = NULL;
 volatile static int directory_fd = -1;
 static char * volatile directory2_path = NULL;
 volatile static int has_directory2 = 0;
-static char directory_path[PATH_MAX+1] = {0};
+static char directory_path[SKBOX_PATH_MAX+1] = {0};
 static int enable_stealth_mode = 0;
 static int enable_connect = 0;
 static int enable_override_scope_id = 0;
@@ -181,8 +182,8 @@ static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, i
 		char filename[20] = "/skbox_dir_XXXXX\0";
 		int16tonum(dir_file, &filename[11]);
 
-		char directory_full_path[PATH_MAX + 1] = {0};
-		size_t n = write_string_to_buf(directory_full_path, PATH_MAX, directory_path, filename);
+		char directory_full_path[SKBOX_PATH_MAX + 1] = {0};
+		size_t n = write_string_to_buf(directory_full_path, SKBOX_PATH_MAX, directory_path, filename);
 		directory_full_path[n] = 0;
 		/*
 		 * This might actually be a security vulnerability
@@ -190,9 +191,9 @@ static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, i
 		 * Not remotely exploitable even if they have control of the bind address,
 		 * unless they also have arbitrary control of environment variables, and even in
 		 * the case of setuid/setgid, LD_PRELOAD is ignored.
-		strncpy(directory_full_path, directory_path, PATH_MAX);
-		strncat(directory_full_path, filename, PATH_MAX);
-		if (directory_full_path[PATH_MAX - 1]) goto do_real_bind;
+		strncpy(directory_full_path, directory_path, SKBOX_PATH_MAX);
+		strncat(directory_full_path, filename, SKBOX_PATH_MAX);
+		if (directory_full_path[SKBOX_PATH_MAX - 1]) goto do_real_bind;
 		*/
 
 		int lookup_fd = open(directory_full_path, O_RDONLY | O_CLOEXEC | O_NOCTTY);
@@ -408,8 +409,8 @@ void __socketbox_preload_init(void) {
 	}
 	char *directory = getenv("SKBOX_DIRECTORY_ROOT");
 	if (directory) {
-		if (strlen(directory) < PATH_MAX) {
-			strncpy(directory_path, directory, PATH_MAX);
+		if (strlen(directory) < SKBOX_PATH_MAX) {
+			strncpy(directory_path, directory, SKBOX_PATH_MAX);
 			__sync_synchronize();
 			directory_fd = -10;
 		}
