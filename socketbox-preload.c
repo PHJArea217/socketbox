@@ -328,7 +328,10 @@ int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
 		}
 	}
 	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_TYPE) != SOCK_DGRAM) goto real_accept;
-	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN) != AF_UNIX) return -1;
+	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN) != AF_UNIX) {
+		errno = EOPNOTSUPP;
+		return -1;
+	}
 	int new_fd = skbox_receive_fd_from_socket(fd);
 	if (new_fd == -1) return -1;
 	/* FIXME: inherit flags from fd? */
@@ -359,14 +362,17 @@ int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
 	}
 	return new_fd;
 real_accept:
-	if ((len == NULL) || (*len == 0)) return real_accept4(fd, addr, len, flags);
+	if (len == NULL) return real_accept4(fd, addr, len, flags);
 	socklen_t orig_len = *len;
-	int rv = real_accept4(fd, addr, len, flags);
-	if ((rv >= 0) && ((*len) > 0) && (orig_len > 0) && ((*len) < orig_len)) {
+	if (orig_len == 0) return real_accept4(fd, addr, len, flags);
+	socklen_t f_len = orig_len;
+	int rv = real_accept4(fd, addr, &f_len, flags);
+	if ((rv >= 0) && (f_len > 0) && (orig_len > 0) && (f_len < orig_len)) {
 		/* Zero out the excess buffer, to prevent any data leakage
 		 * from not expecting the right address length */
-		memset(&((char *)addr)[*len], 0, orig_len - (*len));
+		memset(&((char *)addr)[f_len], 0, orig_len - f_len);
 	}
+	*len = f_len;
 	return rv;
 close_fail:
 	close(new_fd);
