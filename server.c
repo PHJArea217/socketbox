@@ -29,6 +29,7 @@ int main(int argc, char **argv) {
 	int keep_groups = 0;
 	int nr_groups = 0;
 	gid_t *group_list = malloc(NGROUPS_MAX * sizeof(gid_t));
+	if (!group_list) abort();
 	char *chroot_dir = NULL;
 	struct skbox_action *forced_action = NULL;
 	int do_daemon = 0;

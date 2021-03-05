@@ -29,6 +29,7 @@ static int compare_strings_before_colon(const void *a, const void *b) {
 }
 static int parse_ip_with_mask(const char *spec, struct in6_addr *addr_out, struct in6_addr *mask_out) {
 	char *s = strdup(spec);
+	if (!s) abort();
 	char *slashbrk = strchr(s, '/');
 	if (slashbrk) {
 		*slashbrk++ = 0;
@@ -336,6 +337,7 @@ static int parse_config_token(const char *token, struct skbox_config *global_con
 }
 struct skbox_config *skbox_parse_config(FILE *input_file) {
 	struct skbox_config *result = calloc(sizeof(struct skbox_config), 1);
+	if (!result) return NULL;
 	int linenr = 0;
 	while (1) {
 		char *line = NULL;
@@ -354,6 +356,7 @@ struct skbox_config *skbox_parse_config(FILE *input_file) {
 		for (char *token = strtok_r(line, " \t", &saveptr); token; token = strtok_r(NULL, " ", &saveptr)) {
 			if (parse_config_token(token, result) < 0) {
 				fprintf(stderr, "Syntax error on line %d, near '%s'\n", linenr, token);
+				free(line);
 				return NULL;
 			}
 		}

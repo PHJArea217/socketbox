@@ -317,6 +317,16 @@ int main(int argc, char **argv) {
 					if (newfd == -1) {
 						break;
 					}
+					struct fd_relay_entry *state = calloc(sizeof(struct fd_relay_entry), 1);
+					struct eventfd_event_type *new_entry_localfd = calloc(sizeof(struct eventfd_event_type), 1);
+					struct eventfd_event_type *new_entry_remotefd = calloc(sizeof(struct eventfd_event_type), 1);
+					if (!(state && new_entry_localfd && new_entry_remotefd)) {
+						free(state);
+						free(new_entry_localfd);
+						free(new_entry_remotefd);
+						close(newfd);
+						break;
+					}
 					/* logging of ip addresses */
 					char r_addrstr[INET6_ADDRSTRLEN + 40] = {0};
 					char l_addrstr[INET6_ADDRSTRLEN + 40] = {0};
@@ -409,9 +419,6 @@ int main(int argc, char **argv) {
 							}
 						}
 					}
-					struct fd_relay_entry *state = calloc(sizeof(struct fd_relay_entry), 1);
-					struct eventfd_event_type *new_entry_localfd = calloc(sizeof(struct eventfd_event_type), 1);
-					struct eventfd_event_type *new_entry_remotefd = calloc(sizeof(struct eventfd_event_type), 1);
 					struct epoll_event epoll_infd = {0, {.ptr = new_entry_localfd}};
 					struct epoll_event epoll_outfd = {0, {.ptr = new_entry_remotefd}};
 					state->infd = newfd;
