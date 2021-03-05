@@ -298,6 +298,10 @@ int main(int argc, char **argv) {
 			struct eventfd_event_type *current_entry = events[i].data.ptr;
 			int revents = events[i].events;
 			struct fd_relay_entry *e = current_entry->entry;
+			struct fd_relay_entry *state = NULL;
+			struct eventfd_event_type *new_entry_localfd = NULL;
+			struct eventfd_event_type *new_entry_remotefd = NULL;
+			int state_allocated = 0;
 			switch (current_entry->type) {
 				case 0:
 					;
@@ -317,9 +321,9 @@ int main(int argc, char **argv) {
 					if (newfd == -1) {
 						break;
 					}
-					struct fd_relay_entry *state = calloc(sizeof(struct fd_relay_entry), 1);
-					struct eventfd_event_type *new_entry_localfd = calloc(sizeof(struct eventfd_event_type), 1);
-					struct eventfd_event_type *new_entry_remotefd = calloc(sizeof(struct eventfd_event_type), 1);
+					state = calloc(sizeof(struct fd_relay_entry), 1);
+					new_entry_localfd = calloc(sizeof(struct eventfd_event_type), 1);
+					new_entry_remotefd = calloc(sizeof(struct eventfd_event_type), 1);
 					if (!(state && new_entry_localfd && new_entry_remotefd)) {
 						free(state);
 						free(new_entry_localfd);
@@ -327,6 +331,7 @@ int main(int argc, char **argv) {
 						close(newfd);
 						break;
 					}
+					state_allocated = 1;
 					/* logging of ip addresses */
 					char r_addrstr[INET6_ADDRSTRLEN + 40] = {0};
 					char l_addrstr[INET6_ADDRSTRLEN + 40] = {0};
@@ -358,8 +363,12 @@ int main(int argc, char **argv) {
 								break;
 							}
 							char *orig_pathname = remote_addr_unix.sun_path;
-							snprintf(new_address_unix.sun_path, sizeof(new_address_unix.sun_path),
-									"%s-%08x", orig_pathname, ntohl(conn_local_addr.sin6_addr.s6_addr32[3]));
+							if (snprintf(new_address_unix.sun_path, sizeof(new_address_unix.sun_path),
+									"%s-%08x", orig_pathname, ntohl(conn_local_addr.sin6_addr.s6_addr32[3])) <= 0) {
+								close(newfd);
+								close(new_socket_fd);
+								break;
+							}
 							new_remote_addr_unix_len = strlen(new_address_unix.sun_path);
 						}
 						if (new_address_unix.sun_path[0] == '@') {
@@ -419,6 +428,7 @@ int main(int argc, char **argv) {
 							}
 						}
 					}
+					state_allocated = 0;
 					struct epoll_event epoll_infd = {0, {.ptr = new_entry_localfd}};
 					struct epoll_event epoll_outfd = {0, {.ptr = new_entry_remotefd}};
 					state->infd = newfd;
@@ -494,6 +504,11 @@ int main(int argc, char **argv) {
 						}
 					}
 					break;
+			}
+			if (state_allocated) {
+				free(new_entry_localfd);
+				free(new_entry_remotefd);
+				free(state);
 			}
 			if (!e) continue;
 			if (e->state_inout == 3) {
