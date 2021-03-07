@@ -1,6 +1,6 @@
 CC ?= gcc
 CCLD ?= $(CC)
-CFLAGS ?= -fvisibility=hidden -Wall -O2 -fstack-protector-strong -fstack-clash-protection -D_FORTIFY_SOURCE=2
+CFLAGS ?= -fvisibility=hidden -Wall -O2 -fcf-protection=full -fstack-protector-strong -fstack-clash-protection -D_FORTIFY_SOURCE=2
 CCLDFLAGS ?= -Wl,-z,relro -Wl,-z,now
 all: socketbox socketbox-inetd socketbox-relay send-receive-fd socket-query libsocketbox-preload.so run-with-socketbox
 socketbox: unix_scm_rights.o config_parser.o server.o lookup.o libsocketbox.o

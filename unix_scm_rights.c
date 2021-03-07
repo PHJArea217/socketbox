@@ -19,6 +19,9 @@ int skbox_receive_fd_from_socket(int fd) {
 				return -1;
 			}
 			if (sock_type != SOCK_DGRAM) {
+				/* I would have ideally used SIGHUP here, but some
+				 * daemons reload themselves instead of terminating */
+				kill(0, SIGTERM);
 				errno = ENOLINK;
 				return -1;
 			}

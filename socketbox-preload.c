@@ -28,6 +28,7 @@ static int enable_connect = 0;
 static int enable_override_scope_id = 0;
 static int enable_accept_hack = 0;
 static int enable_getpeername_protection = 2;
+static int enable_stream_seqpacket = 0;
 /*
 static const char *prefixes[] = {
 	"./skbox-",
@@ -317,6 +318,25 @@ int listen(int fd, int backlog) {
 	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN) != AF_UNIX) return real_listen(fd, backlog);
 	return 0;
 }
+static int check_socket_mode(int fd) {
+	/* AF_UNIX, SOCK_DGRAM */
+	/* AF_UNIX, SOCK_STREAM, SO_ACCEPTCONN=0 */
+	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN) != AF_UNIX) return 0;
+	int sock_type = skbox_getsockopt_integer(fd, SOL_SOCKET, SO_TYPE);
+	switch (sock_type) {
+		case SOCK_STREAM:
+		case SOCK_SEQPACKET:
+			if (enable_stream_seqpacket) {
+				if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_ACCEPTCONN) == 0) return 1;
+			}
+			break;
+		case SOCK_DGRAM:
+			return 1;
+		default:
+			return 0;
+	}
+	return 0;
+}
 __attribute__((visibility("default")))
 int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
 	socklen_t the_length = 0;
@@ -327,10 +347,8 @@ int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
 			return -1;
 		}
 	}
-	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_TYPE) != SOCK_DGRAM) goto real_accept;
-	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN) != AF_UNIX) {
-		errno = EOPNOTSUPP;
-		return -1;
+	if (!check_socket_mode(fd)) {
+		goto real_accept;
 	}
 	int new_fd = skbox_receive_fd_from_socket(fd);
 	if (new_fd == -1) return -1;
@@ -432,5 +450,9 @@ void __socketbox_preload_init(void) {
 	stealth_mode = getenv("SKBOX_GETPEERNAME_PROTECTION");
 	if (stealth_mode && (stealth_mode[0] >= '0') && (stealth_mode[0] <= '9')) {
 		enable_getpeername_protection = stealth_mode[0] - '0';
+	}
+	stealth_mode = getenv("SKBOX_ACCEPT_STREAM");
+	if (stealth_mode && (stealth_mode[0] == '1')) {
+		enable_stream_seqpacket = 1;
 	}
 }
