@@ -4,6 +4,7 @@
 #include <string.h>
 #include <errno.h>
 #include <stddef.h>
+#include <signal.h>
 #define SCM_MAX_FD 256
 int skbox_receive_fd_from_socket(int fd) {
 	while (1) {
