@@ -1,6 +1,7 @@
 *.o
 socketbox
 socketbox-inetd
+socketbox-inetd-p
 socketbox-relay
 send-receive-fd
 socket-query

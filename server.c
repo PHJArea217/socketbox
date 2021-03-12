@@ -1,5 +1,6 @@
 #include "config.h"
 #include "unix_scm_rights.h"
+#include "libsocketbox.h"
 #include <string.h>
 #include <stdio.h>
 #include <getopt.h>
@@ -34,8 +35,11 @@ int main(int argc, char **argv) {
 	struct skbox_action *forced_action = NULL;
 	int do_daemon = 0;
 	int listen_backlog = 4096;
+	int has_reg_proto = 0;
+	uint32_t reg_proto_nr = 0;
+	char *reg_proto_sock_name = NULL;
 	/* FIXME: nsenter + enter user namespace */
-	while ((opt = getopt(argc, argv, "+f:l:p:tFRrs:eu:g:G:kdx:S:i:b:z")) >= 0) {
+	while ((opt = getopt(argc, argv, "+f:l:p:tFRrs:eu:g:G:kdx:S:i:b:zP:")) >= 0) {
 		switch(opt) {
 			case 'f':
 				config_file = optarg;
@@ -154,15 +158,40 @@ int main(int argc, char **argv) {
 			case 'z':
 				clear_transparent = 1;
 				break;
+			case 'P':
+				has_reg_proto = 1;
+				char *str_d = strdup(optarg);
+				if (!str_d) return 1;
+				char *str_e = strchr(str_d, ':');
+				if (!str_e) {
+					fprintf(stderr, "-P must be of the format nr:/path\n");
+					return 1;
+				}
+				*str_e = 0;
+				str_e = &str_e[1];
+				reg_proto_nr = strtoul(str_d, NULL, 0);
+				char *sock_path = strdup(str_e);
+				if (!sock_path) {
+					return 1;
+				}
+				free(reg_proto_sock_name);
+				reg_proto_sock_name = sock_path;
+				break;
 			default:
 				/* FIXME: help text */
 				return 1;
 				break;
 		}
 	}
-	if (server_socket_fd == -1) {
+	if (has_reg_proto) {
+		server_socket_fd = skbox_register_bind(reg_proto_sock_name, reg_proto_nr);
+		if (server_socket_fd < 0) {
+			perror("skbox_register_bind");
+			return 1;
+		}
+	} else if (server_socket_fd < 0) {
 		server_socket_fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
-		if (server_socket_fd == -1) {
+		if (server_socket_fd < 0) {
 			perror("socket");
 			return 1;
 		}
@@ -180,6 +209,7 @@ int main(int argc, char **argv) {
 			return 1;
 		}
 	}
+	free(reg_proto_sock_name);
 	if (do_daemon) {
 		if (daemon(0, 1)) {
 			return 1;
@@ -238,9 +268,11 @@ int main(int argc, char **argv) {
 		}
 		skbox_sort_maps(my_config);
 	}
-	if (listen(server_socket_fd, listen_backlog)) {
-		perror("listen");
-		return 1;
+	if (!has_reg_proto) {
+		if (listen(server_socket_fd, listen_backlog)) {
+			perror("listen");
+			return 1;
+		}
 	}
 	int send_socket = socket(AF_UNIX, SOCK_DGRAM, 0);
 	if (send_socket == -1) {
@@ -251,7 +283,22 @@ int main(int argc, char **argv) {
 		struct skbox_ip_port_tuple current_connection = {0};
 		struct sockaddr_in6 remote_addr = {0};
 		socklen_t l = sizeof(struct sockaddr_in6);
-		int new_fd = accept(server_socket_fd, (struct sockaddr *) &remote_addr, &l);
+		int new_fd = -1;
+		if (has_reg_proto) {
+			errno = 0;
+			new_fd = skbox_receive_fd_from_socket_p(server_socket_fd, 1);
+			if ((new_fd < 0) && (errno == ENOLINK)) {
+				break;
+			} else if (new_fd < 0) {
+				continue;
+			}
+			if (getpeername(new_fd, (struct sockaddr *) &remote_addr, &l)) {
+				close(new_fd);
+				continue;
+			}
+		} else {
+			new_fd = accept(server_socket_fd, (struct sockaddr *) &remote_addr, &l);
+		}
 		if (new_fd == -1) {
 			switch (errno) {
 				case EAGAIN:
@@ -297,5 +344,5 @@ int main(int argc, char **argv) {
 		close(new_fd);
 	}
 	close(send_socket);
-	return 1;
+	return 0;
 }

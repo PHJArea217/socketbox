@@ -7,11 +7,12 @@
 #include "libsocketbox.h"
 int main(int argc, char **argv) {
 	signal(SIGCHLD, SIG_IGN);
-	if (argc<3) {
-		fprintf(stderr, "Usage: %s [socket] [program] [arguments]\n", argv[0]);
+	if (argc<4) {
+		fprintf(stderr, "Usage: %s [socket] [group_nr] [program] [arguments]\n", argv[0]);
 		return 1;
 	}
-	int socket_fd = skbox_new(argv[1]);
+	unsigned long n = strtoul(argv[2], NULL, 0);
+	int socket_fd = skbox_register_bind(argv[1], n);
 	if (socket_fd == -1) {
 		perror("Failed to create socket");
 		return 1;
@@ -27,7 +28,7 @@ int main(int argc, char **argv) {
 			if (dup2(s, 1) < 0) _exit(1);
 			if (dup2(s, 0) < 0) _exit(1);
 			if (s > 1) close(s);
-			execvp(argv[2], &argv[2]);
+			execvp(argv[3], &argv[3]);
 			_exit(127);
 		}
 		close(s);

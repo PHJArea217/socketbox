@@ -7,6 +7,9 @@
 #include <signal.h>
 #define SCM_MAX_FD 256
 int skbox_receive_fd_from_socket(int fd) {
+	return skbox_receive_fd_from_socket_p(fd, 0);
+}
+int skbox_receive_fd_from_socket_p(int fd, int notify_disconnect) {
 	while (1) {
 		char data[128] = {0};
 		char anc_data[1280] = {0};
@@ -22,7 +25,9 @@ int skbox_receive_fd_from_socket(int fd) {
 			if (sock_type != SOCK_DGRAM) {
 				/* I would have ideally used SIGHUP here, but some
 				 * daemons reload themselves instead of terminating */
-				kill(0, SIGTERM);
+				if (!notify_disconnect) {
+					kill(0, SIGTERM);
+				}
 				errno = ENOLINK;
 				return -1;
 			}
