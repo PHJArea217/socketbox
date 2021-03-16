@@ -19,8 +19,12 @@ int main(int argc, char **argv) {
 	}
 	while (1) {
 		int s = skbox_receive_fd_from_socket_p(socket_fd, 1);
-		if (s == -1 && errno != EINTR) {
-			perror("Failed to receive from socket");
+		if (s < 0) {
+			if (errno == ENOLINK) {
+				break;
+			} else if (errno != EINTR) {
+				perror("Failed to receive from socket");
+			}
 			continue;
 		}
 		if (!fork()) {
@@ -33,4 +37,5 @@ int main(int argc, char **argv) {
 		}
 		close(s);
 	}
+	return 0;
 }
