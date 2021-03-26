@@ -29,6 +29,7 @@ static int enable_override_scope_id = 0;
 static int enable_accept_hack = 0;
 static int enable_getpeername_protection = 2;
 static int enable_stream_seqpacket = 0;
+static int enable_block_listen = 1;
 /*
 static const char *prefixes[] = {
 	"./skbox-",
@@ -312,11 +313,62 @@ int connect(int fd, const struct sockaddr *addr, socklen_t len) {
 }
 __attribute__((visibility("default")))
 int listen(int fd, int backlog) {
+	int sock_domain = skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN);
+	if (sock_domain < 0) return -1;
+	int sock_type = skbox_getsockopt_integer(fd, SOL_SOCKET, SO_TYPE);
+	if (sock_type < 0) return -1;
 	/* Check that it's AF_UNIX, SOCK_DGRAM. If so, do nothing; otherwise just listen as normal. */
 	/* FIXME: SOCK_STREAM/SOCK_SEQPACKET if socket is connected */
-	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_TYPE) != SOCK_DGRAM) return real_listen(fd, backlog);
-	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN) != AF_UNIX) return real_listen(fd, backlog);
-	return 0;
+
+	switch (sock_domain) {
+		case AF_INET:
+			if (enable_block_listen) {
+				struct sockaddr_in local_addr = {0};
+				socklen_t addr_size = sizeof(local_addr);
+				if (getsockname(fd, (struct sockaddr *) &local_addr, &addr_size)) {
+					return -1;
+				}
+				if (local_addr.sin_family != AF_INET) {
+					errno = EINVAL;
+					return -1;
+				}
+				if (addr_size == sizeof(local_addr)) {
+					if ((local_addr.sin_addr.s_addr == INADDR_ANY) && (local_addr.sin_port == 0)) {
+						errno = EINVAL;
+						return -1;
+					}
+				}
+			}
+			return real_listen(fd, backlog);
+			break;
+		case AF_INET6:
+			if (enable_block_listen) {
+				struct sockaddr_in6 local_addr2 = {0};
+				socklen_t addr_size = sizeof(local_addr2);
+				if (getsockname(fd, (struct sockaddr *) &local_addr2, &addr_size)) {
+					return -1;
+				}
+				if (local_addr2.sin6_family != AF_INET6) {
+					errno = EINVAL;
+					return -1;
+				}
+				if (addr_size == sizeof(local_addr2)) {
+					if (local_addr2.sin6_port == 0) {
+						errno = EINVAL;
+						return -1;
+					}
+				}
+			}
+			return real_listen(fd, backlog);
+			break;
+		case AF_UNIX:
+			if (sock_type == SOCK_DGRAM) {
+				return 0;
+			}
+			return real_listen(fd, backlog);
+			break;
+	}
+	return real_listen(fd, backlog);
 }
 static int check_socket_mode(int fd) {
 	/* AF_UNIX, SOCK_DGRAM */
@@ -454,5 +506,9 @@ void __socketbox_preload_init(void) {
 	stealth_mode = getenv("SKBOX_ACCEPT_STREAM");
 	if (stealth_mode && (stealth_mode[0] == '1')) {
 		enable_stream_seqpacket = 1;
+	}
+	stealth_mode = getenv("SKBOX_BLOCK_LISTEN_EMPTY_ADDR");
+	if (stealth_mode && (stealth_mode[0] == '0')) {
+		enable_block_listen = 0;
 	}
 }
