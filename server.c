@@ -12,6 +12,7 @@
 #include <sys/prctl.h>
 #include <ctype.h>
 #include <limits.h>
+#include <time.h>
 #include <errno.h>
 int main(int argc, char **argv) {
 	int server_socket_fd = -1;
@@ -310,6 +311,10 @@ int main(int argc, char **argv) {
 				case ENOPROTOOPT:
 				case EOPNOTSUPP:
 				case EPROTO:
+					continue;
+				case EMFILE:
+				case ENFILE:
+					nanosleep(&(struct timespec) {0, 5000000}, NULL);
 					continue;
 			}
 			perror("accept");
