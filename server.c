@@ -280,6 +280,7 @@ int main(int argc, char **argv) {
 		perror("socket");
 		return 1;
 	}
+	int err_ = 0;
 	while (1) {
 		struct skbox_ip_port_tuple current_connection = {0};
 		struct sockaddr_in6 remote_addr = {0};
@@ -312,13 +313,16 @@ int main(int argc, char **argv) {
 				case EOPNOTSUPP:
 				case EPROTO:
 					continue;
+				case ENOMEM:
+				case ENOBUFS:
 				case EMFILE:
 				case ENFILE:
 					nanosleep(&(struct timespec) {0, 5000000}, NULL);
 					continue;
 			}
 			perror("accept");
-			continue;
+			err_ = 10;
+			break;
 		}
 		if (clear_transparent && setsockopt(new_fd, SOL_IPV6, IPV6_TRANSPARENT, &(int) {0}, sizeof(int))) {close(new_fd); continue;}
 		if (l == sizeof(struct sockaddr_in6) && remote_addr.sin6_family == AF_INET6) {
@@ -349,5 +353,5 @@ int main(int argc, char **argv) {
 		close(new_fd);
 	}
 	close(send_socket);
-	return 0;
+	return err_;
 }
