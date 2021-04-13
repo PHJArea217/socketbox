@@ -30,7 +30,7 @@ static int enable_accept_hack = 0;
 static int enable_getpeername_protection = 2;
 static int enable_stream_seqpacket = 0;
 static int enable_block_listen = 1;
-static int enable_strict_socket_mode = 1;
+static int enable_strict_socket_mode = 2;
 /*
 static const char *prefixes[] = {
 	"./skbox-",
@@ -408,7 +408,19 @@ int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
 	if (enable_strict_socket_mode) {
 		if (skbox_getsockopt_integer(new_fd, SOL_SOCKET, SO_TYPE) != SOCK_STREAM) {
 			errno = EAGAIN;
-			return -1;
+			goto close_fail;
+		}
+		if (enable_strict_socket_mode >= 2) {
+			switch (skbox_getsockopt_integer(new_fd, SOL_SOCKET, SO_DOMAIN)) {
+				case AF_UNIX:
+				case AF_INET:
+				case AF_INET6:
+					break;
+					/* I would add AF_VSOCK here but it might break programs that rely on the proper functioning of MSG_PEEK */
+				default:
+					errno = EAGAIN;
+					goto close_fail;
+			}
 		}
 	}
 	/* FIXME: inherit flags from fd? */
@@ -519,7 +531,7 @@ void __socketbox_preload_init(void) {
 		enable_block_listen = 0;
 	}
 	stealth_mode = getenv("SKBOX_STRICT_STREAM_MODE");
-	if (stealth_mode && (stealth_mode[0] == '0')) {
-		enable_strict_socket_mode = 0;
+	if (stealth_mode && (stealth_mode[0] >= '0') && (stealth_mode[0] <= '9')) {
+		enable_strict_socket_mode = stealth_mode[0] - '0';
 	}
 }
