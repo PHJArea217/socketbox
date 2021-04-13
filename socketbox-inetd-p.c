@@ -6,6 +6,7 @@
 #include "unix_scm_rights.h"
 #include "libsocketbox.h"
 int main(int argc, char **argv) {
+	skbox_set_validation_level(-1);
 	signal(SIGCHLD, SIG_IGN);
 	if (argc<4) {
 		fprintf(stderr, "Usage: %s [socket] [group_nr] [program] [arguments]\n", argv[0]);

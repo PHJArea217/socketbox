@@ -181,6 +181,7 @@ static int try_fd_relay(struct fd_relay_entry *entry, int backwards, int epoll_f
 	return (changed ? 2 : 0) | !!(entry->state_outin == 3 && entry->state_inout == 3);
 }
 int main(int argc, char **argv) {
+	skbox_set_validation_level(-1);
 	int listen_fd = 0;
 	int opt = 0;
 	struct sockaddr_in6 remote_addr = {AF_INET6, htons(80), 0, IN6ADDR_LOOPBACK_INIT, 0};

@@ -15,6 +15,7 @@
 #include <time.h>
 #include <errno.h>
 int main(int argc, char **argv) {
+	skbox_set_validation_level(-1);
 	int server_socket_fd = -1;
 	struct in6_addr bind_addr = IN6ADDR_ANY_INIT;
 	uint16_t port = 80;
@@ -142,7 +143,7 @@ int main(int argc, char **argv) {
 				forced_action->type = SKBOX_ACTION_SOCKET;
 				forced_action->action.name = calloc(sizeof(struct sockaddr_un), 1);
 				forced_action->action.name->sun_family = AF_UNIX;
-				strncpy(forced_action->action.name->sun_path, optarg, sizeof(((struct sockaddr_un *) 0)->sun_path));
+				strncpy((char *)forced_action->action.name->sun_path, optarg, sizeof(((struct sockaddr_un *) 0)->sun_path) - 1);
 				break;
 			case 'i':
 				if (forced_action) {

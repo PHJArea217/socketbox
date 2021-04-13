@@ -532,6 +532,6 @@ void __socketbox_preload_init(void) {
 	}
 	stealth_mode = getenv("SKBOX_STRICT_STREAM_MODE");
 	if (stealth_mode && (stealth_mode[0] >= '0') && (stealth_mode[0] <= '9')) {
-		enable_strict_socket_mode = stealth_mode[0] - '0';
+		enable_strict_socket_mode = atoi(stealth_mode);
 	}
 }

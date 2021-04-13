@@ -5,7 +5,9 @@
 #include <errno.h>
 #include <stddef.h>
 #include <signal.h>
+#include <stdlib.h>
 #define SCM_MAX_FD 256
+static int validation_level = 0;
 int skbox_receive_fd_from_socket(int fd) {
 	return skbox_receive_fd_from_socket_p(fd, 0);
 }
@@ -40,10 +42,29 @@ int skbox_receive_fd_from_socket_p(int fd, int notify_disconnect) {
 				if (nr_fds == 0 || nr_fds > SCM_MAX_FD) continue;
 				int *fd_list = (int *) CMSG_DATA(c);
 				if (has_fd_to_return) {
+bad_fd:
 					for (unsigned int excess_fds = 0; excess_fds < nr_fds; excess_fds++) {
 						close(fd_list[excess_fds]);
 					}
 					continue;
+				}
+				if (validation_level) {
+					int new_fd_f = fd_list[0];
+					if (skbox_getsockopt_integer(new_fd_f, SOL_SOCKET, SO_TYPE) != SOCK_STREAM) {
+						has_fd_to_return = 2;
+						goto bad_fd;
+					}
+					if (validation_level >= 2) {
+						switch (skbox_getsockopt_integer(new_fd_f, SOL_SOCKET, SO_DOMAIN)) {
+							case AF_UNIX:
+							case AF_INET:
+							case AF_INET6:
+								break;
+							default:
+								has_fd_to_return = 2;
+								goto bad_fd;
+						}
+					}
 				}
 				fd_to_return = fd_list[0];
 				has_fd_to_return = 1;
@@ -52,7 +73,7 @@ int skbox_receive_fd_from_socket_p(int fd, int notify_disconnect) {
 				}
 			}
 		}
-		if (has_fd_to_return) {
+		if (has_fd_to_return == 1) {
 			return fd_to_return;
 		}
 	}
@@ -70,4 +91,16 @@ int skbox_send_fd(int sockfd, int fd, const struct sockaddr *addr, socklen_t add
 	c->cmsg_len = CMSG_LEN(sizeof(int));
 	memcpy(CMSG_DATA(c), &fd, sizeof(int));
 	return sendmsg(sockfd, &m, MSG_DONTWAIT|MSG_NOSIGNAL) == 1 ? 0 : -1;
+}
+void skbox_set_validation_level(int level) {
+	if (level >= 0) {
+		validation_level = level;
+	} else {
+		char *env_name = getenv("SKBOX_STRICT_STREAM_MODE");
+		if (env_name && (env_name[0] >= '0') && (env_name[0] <= '9')) {
+			validation_level = atoi(env_name);
+		} else {
+			validation_level = 2;
+		}
+	}
 }

@@ -132,7 +132,7 @@ static void common_jump_action_handler(const char *s, struct skbox_action *resul
 			/* FIXME: When to free memory? */
 			;struct sockaddr_un *addr = calloc(sizeof(struct sockaddr_un), 1);
 			addr->sun_family = AF_UNIX;
-			strncpy(addr->sun_path, s, sizeof(addr->sun_path));
+			strncpy(addr->sun_path, s, sizeof(addr->sun_path) - 1);
 			result->action.name = addr;
 			break;
 		case SKBOX_ACTION_JUMP_MAP:
