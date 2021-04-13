@@ -30,6 +30,7 @@ static int enable_accept_hack = 0;
 static int enable_getpeername_protection = 2;
 static int enable_stream_seqpacket = 0;
 static int enable_block_listen = 1;
+static int enable_strict_socket_mode = 1;
 /*
 static const char *prefixes[] = {
 	"./skbox-",
@@ -404,6 +405,12 @@ int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
 	}
 	int new_fd = skbox_receive_fd_from_socket(fd);
 	if (new_fd == -1) return -1;
+	if (enable_strict_socket_mode) {
+		if (skbox_getsockopt_integer(new_fd, SOL_SOCKET, SO_TYPE) != SOCK_STREAM) {
+			errno = EAGAIN;
+			return -1;
+		}
+	}
 	/* FIXME: inherit flags from fd? */
 	int orig_flags = fcntl(new_fd, F_GETFL, 0);
 	if (orig_flags == -1) goto close_fail;
@@ -510,5 +517,9 @@ void __socketbox_preload_init(void) {
 	stealth_mode = getenv("SKBOX_BLOCK_LISTEN_EMPTY_ADDR");
 	if (stealth_mode && (stealth_mode[0] == '0')) {
 		enable_block_listen = 0;
+	}
+	stealth_mode = getenv("SKBOX_STRICT_STREAM_MODE");
+	if (stealth_mode && (stealth_mode[0] == '0')) {
+		enable_strict_socket_mode = 0;
 	}
 }
