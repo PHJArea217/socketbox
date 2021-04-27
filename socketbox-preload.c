@@ -121,7 +121,9 @@ static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, i
 	 */
 	if (len != sizeof(struct sockaddr_in6)) goto do_real_bind;
 	if (addr->sa_family != AF_INET6) goto do_real_bind;
-	const struct sockaddr_in6 *addr6 = (const struct sockaddr_in6 *) addr;
+	struct sockaddr_in6 addr6_buf;
+	memcpy(&addr6_buf, addr, sizeof(struct sockaddr_in6));
+	const struct sockaddr_in6 *addr6 = &addr6_buf;
 	if (!enable_override_scope_id && !!addr6->sin6_scope_id) goto do_real_bind;
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 	if (addr6->sin6_addr.s6_addr32[0] == 0x01008ffe) return bind_to_ll(fd, addr6, is_connect);
