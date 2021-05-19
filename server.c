@@ -51,6 +51,7 @@ int main(int argc, char **argv) {
 					fprintf(stderr, "Invalid IP address %s\n", optarg);
 					return 1;
 				}
+				break;
 			case 'p':
 				port = atoi(optarg);
 				break;
@@ -342,6 +343,12 @@ int main(int argc, char **argv) {
 			switch(result_action->type) {
 				case SKBOX_ACTION_FD:
 					if (skbox_send_fd(result_action->action.send_fd, new_fd, NULL, 0)) {
+						if (errno == EPIPE) {
+							if (forced_action) {
+								/* In "just send to fd" mode, this is the only fd. */
+								return 11;
+							}
+						}
 						perror("sendmsg");
 					}
 					break;
