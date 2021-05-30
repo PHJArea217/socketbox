@@ -166,5 +166,9 @@ int main(int argc, char **argv) {
 			}
 			break;
 	}
+	if (fflush(stdout) || ferror(stdout)) {
+		perror("stdout: write error");
+		return 1;
+	}
 	return 0;
 }
