@@ -40,7 +40,7 @@ static int parse_ip_with_mask(const char *spec, struct in6_addr *addr_out, struc
 			}
 		} else if ((slashbrk[0] >= '0') && (slashbrk[0] <= '9')) {
 			int cidr_len = atoi(slashbrk);
-			if (cidr_len < 0 || cidr_len > 128) {
+			if ((cidr_len < 0) || (cidr_len > 128)) {
 				free(s);
 				return -1;
 			}
