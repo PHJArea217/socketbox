@@ -33,21 +33,31 @@ static int parse_ip_with_mask(const char *spec, struct in6_addr *addr_out, struc
 	char *slashbrk = strchr(s, '/');
 	if (slashbrk) {
 		*slashbrk++ = 0;
-		int cidr_len = atoi(slashbrk);
-		if (cidr_len < 0 || cidr_len > 128) {
+		if (strchr(slashbrk, ':')) {
+			if (inet_pton(AF_INET6, slashbrk, mask_out) != 1) {
+				free(s);
+				return -1;
+			}
+		} else if ((slashbrk[0] >= '0') && (slashbrk[0] <= '9')) {
+			int cidr_len = atoi(slashbrk);
+			if (cidr_len < 0 || cidr_len > 128) {
+				free(s);
+				return -1;
+			}
+			memset(mask_out, 0, sizeof(struct in6_addr));
+			int n = 0;
+			/* FIXME: check out of bounds conditions */
+			while (cidr_len > 8) {
+				mask_out->s6_addr[n] = 0xff;
+				n++;
+				cidr_len -= 8;
+			}
+			uint8_t nbits[] = {0, 128, 192, 224, 240, 248, 252, 254, 255};
+			mask_out->s6_addr[n] = nbits[cidr_len];
+		} else {
 			free(s);
 			return -1;
 		}
-		memset(mask_out, 0, sizeof(struct in6_addr));
-		int n = 0;
-		/* FIXME: check out of bounds conditions */
-		while (cidr_len > 8) {
-			mask_out->s6_addr[n] = 0xff;
-			n++;
-			cidr_len -= 8;
-		}
-		uint8_t nbits[] = {0, 128, 192, 224, 240, 248, 252, 254, 255};
-		mask_out->s6_addr[n] = nbits[cidr_len];
 	} else {
 		memset(mask_out, 255, sizeof(struct in6_addr));
 	}
