@@ -12,6 +12,7 @@
 #include <netinet/in.h>
 #include <limits.h>
 #include <syscall.h>
+#include <sched.h>
 #define SKBOX_PATH_MAX 256
 static int (*real_bind)(int, const struct sockaddr *, socklen_t) = NULL;
 static int (*real_connect)(int, const struct sockaddr *, socklen_t) = NULL;
@@ -31,6 +32,8 @@ static int enable_getpeername_protection = 2;
 static int enable_stream_seqpacket = 0;
 static int enable_block_listen = 1;
 static int enable_strict_socket_mode = 2;
+static int enable_yield_counter = 0;
+static volatile uint32_t yield_counter = 0;
 /*
 static const char *prefixes[] = {
 	"./skbox-",
@@ -405,6 +408,12 @@ int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
 	if (!check_socket_mode(fd)) {
 		goto real_accept;
 	}
+	if (enable_yield_counter) {
+		uint32_t counter = __sync_fetch_and_add(&yield_counter, 1);
+		if ((counter % 7) == 0) {
+			sched_yield();
+		}
+	}
 	int new_fd = skbox_receive_fd_from_socket(fd);
 	if (new_fd == -1) return -1;
 	if (enable_strict_socket_mode) {
@@ -535,5 +544,9 @@ void __socketbox_preload_init(void) {
 	stealth_mode = getenv("SKBOX_STRICT_STREAM_MODE");
 	if (stealth_mode && (stealth_mode[0] >= '0') && (stealth_mode[0] <= '9')) {
 		enable_strict_socket_mode = atoi(stealth_mode);
+	}
+	stealth_mode = getenv("SKBOX_SCHED_YIELD");
+	if (stealth_mode && (stealth_mode[0] == '1')) {
+		enable_yield_counter = 1;
 	}
 }
