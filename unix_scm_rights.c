@@ -37,8 +37,8 @@ int skbox_receive_fd_from_socket_p(int fd, int notify_disconnect) {
 		int has_fd_to_return = 0;
 		int fd_to_return = -1;
 		for (struct cmsghdr *c = CMSG_FIRSTHDR(&m); c; c = CMSG_NXTHDR(&m, c)) {
-			if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_RIGHTS && c->cmsg_len >= sizeof(struct cmsghdr)) {
-				unsigned int nr_fds = (c->cmsg_len - sizeof(struct cmsghdr)) / sizeof(int);
+			if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_RIGHTS && c->cmsg_len >= CMSG_LEN(0)) {
+				unsigned int nr_fds = (c->cmsg_len - CMSG_LEN(0)) / sizeof(int);
 				if (nr_fds == 0 || nr_fds > SCM_MAX_FD) continue;
 				int *fd_list = (int *) CMSG_DATA(c);
 				if (has_fd_to_return) {
