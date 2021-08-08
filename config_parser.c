@@ -375,14 +375,16 @@ struct skbox_config *skbox_parse_config(FILE *input_file) {
 	}
 	return feof(input_file) ? result : NULL;
 }
-static int compare_tuples(const void *a, const void *b, void *c) {
+static struct skbox_ip_port_tuple *m_mask = NULL;
+static int compare_tuples(const void *a, const void *b) {
 	struct skbox_map_elem *a_map = (struct skbox_map_elem *) a;
 	struct skbox_map_elem *b_map = (struct skbox_map_elem *) b;
-	return skbox_compare_tuples(&a_map->match_pattern, &b_map->match_pattern, (struct skbox_ip_port_tuple *) c);
+	return skbox_compare_tuples(&a_map->match_pattern, &b_map->match_pattern, m_mask);
 }
 void skbox_sort_maps(struct skbox_config *config) {
 	for (uint32_t i = 0; i < config->nr_maps; i++) {
 		struct skbox_map_list *m = &config->maps[i];
-		qsort_r(m->items, m->nr_items, sizeof(struct skbox_map_elem), compare_tuples, &m->mask);
+		m_mask = &m->mask;
+		qsort(m->items, m->nr_items, sizeof(struct skbox_map_elem), compare_tuples);
 	}
 }

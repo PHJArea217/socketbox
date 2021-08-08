@@ -96,11 +96,11 @@ static int send_proxy_protocol(int sourcefd, int targetfd) {
 	struct sockaddr_in6 src_info = {0};
 	struct sockaddr_in6 dst_info = {0};
 	socklen_t r = sizeof(struct sockaddr_in6);
-	if (getsockname(sourcefd, &dst_info, &r) || r != sizeof(struct sockaddr_in6)) {
+	if (getsockname(sourcefd, (struct sockaddr *) &dst_info, &r) || r != sizeof(struct sockaddr_in6)) {
 		return -1;
 	}
 	r = sizeof(struct sockaddr_in6);
-	if (getpeername(sourcefd, &src_info, &r) || r != sizeof(struct sockaddr_in6)) {
+	if (getpeername(sourcefd, (struct sockaddr *) &src_info, &r) || r != sizeof(struct sockaddr_in6)) {
 		return -1;
 	}
 	if (!inet_ntop(AF_INET6, &src_info.sin6_addr, src_ip, sizeof(src_ip))) return -1;
@@ -314,9 +314,9 @@ int main(int argc, char **argv) {
 							close(newfd);
 							break;
 						}
-						getpeername(newfd, &conn_remote_addr, &(socklen_t) {sizeof(struct sockaddr_in6)});
+						getpeername(newfd, (struct sockaddr *) &conn_remote_addr, &(socklen_t) {sizeof(struct sockaddr_in6)});
 					} else {
-						newfd = accept4(listen_fd, &conn_remote_addr, &(socklen_t) {sizeof(struct sockaddr_in6)}, SOCK_NONBLOCK);
+						newfd = accept4(listen_fd, (struct sockaddr *) &conn_remote_addr, &(socklen_t) {sizeof(struct sockaddr_in6)}, SOCK_NONBLOCK);
 					}
 					if (conn_remote_addr.sin6_family != AF_INET6) memset(&conn_remote_addr, 0, sizeof(conn_remote_addr));
 					if (newfd == -1) {
@@ -338,7 +338,7 @@ int main(int argc, char **argv) {
 					char l_addrstr[INET6_ADDRSTRLEN + 40] = {0};
 					struct sockaddr_in6 conn_local_addr = {0};
 					inet_ntop(AF_INET6, &conn_remote_addr.sin6_addr, r_addrstr, sizeof(r_addrstr));
-					getsockname(newfd, &conn_local_addr, &(socklen_t) {sizeof(struct sockaddr_in6)});
+					getsockname(newfd, (struct sockaddr *) &conn_local_addr, &(socklen_t) {sizeof(struct sockaddr_in6)});
 					if (conn_local_addr.sin6_family != AF_INET6) memset(&conn_local_addr, 0, sizeof(conn_local_addr));
 					inet_ntop(AF_INET6, &conn_local_addr.sin6_addr, l_addrstr, sizeof(l_addrstr));
 					fprintf(stderr, "%lu [%s]:%d -> [%s]:%d\n",
@@ -375,7 +375,7 @@ int main(int argc, char **argv) {
 						if (new_address_unix.sun_path[0] == '@') {
 							new_address_unix.sun_path[0] = '\0';
 						}
-						if (connect(new_socket_fd, &new_address_unix, offsetof(struct sockaddr_un, sun_path) + new_remote_addr_unix_len)) {
+						if (connect(new_socket_fd, (struct sockaddr *) &new_address_unix, offsetof(struct sockaddr_un, sun_path) + new_remote_addr_unix_len)) {
 							perror("connect");
 							close(newfd);
 							close(new_socket_fd);
@@ -411,7 +411,7 @@ int main(int argc, char **argv) {
 						}
 						setsockopt(new_socket_fd, SOL_TCP, TCP_NODELAY, &(int) {1}, sizeof(int));
 						setsockopt(newfd, SOL_TCP, TCP_NODELAY, &(int) {1}, sizeof(int));
-						if (connect(new_socket_fd, &new_addr, sizeof(remote_addr))) {
+						if (connect(new_socket_fd, (struct sockaddr *) &new_addr, sizeof(remote_addr))) {
 							if (errno == EINPROGRESS) {
 								connect_deferred = 1;
 							} else {

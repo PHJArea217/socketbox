@@ -15,7 +15,14 @@ int skbox_receive_fd_from_socket_p(int fd, int notify_disconnect) {
 	while (1) {
 		char data[128] = {0};
 		char anc_data[1280] = {0};
-		struct msghdr m = {NULL, 0, &(struct iovec) {data, 128}, 1, anc_data, 1280, 0};
+		struct msghdr m = {};
+		struct iovec iov_s = {};
+		iov_s.iov_base = data;
+		iov_s.iov_len = 128;
+		m.msg_iov = &iov_s;
+		m.msg_iovlen = 1;
+		m.msg_control = anc_data;
+		m.msg_controllen = 1280;
 		ssize_t r = recvmsg(fd, &m, MSG_CMSG_CLOEXEC);
 		if (r < 0) break;
 		if (r == 0) {
@@ -84,7 +91,16 @@ int skbox_send_fd(int sockfd, int fd, const struct sockaddr *addr, socklen_t add
 		struct cmsghdr c;
 		char buf[CMSG_SPACE(sizeof(int))];
 	} my_cmsg = {{0}};
-	struct msghdr m = {(struct sockaddr *) addr, addrlen, &(struct iovec) {"\0", 1}, 1, &my_cmsg, sizeof(my_cmsg), 0};
+	struct msghdr m = {};
+	struct iovec iov_s = {};
+	iov_s.iov_base = "\0";
+	iov_s.iov_len = 1;
+	m.msg_name = (void *) addr;
+	m.msg_namelen = addrlen;
+	m.msg_iov = &iov_s;
+	m.msg_iovlen = 1;
+	m.msg_control = &my_cmsg;
+	m.msg_controllen = sizeof(my_cmsg);
 	struct cmsghdr *c = CMSG_FIRSTHDR(&m);
 	c->cmsg_level = SOL_SOCKET;
 	c->cmsg_type = SCM_RIGHTS;
