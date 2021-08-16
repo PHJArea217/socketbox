@@ -398,6 +398,10 @@ static int check_socket_mode(int fd) {
 __attribute__((visibility("default")))
 int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
 	socklen_t the_length = 0;
+	if (flags & ~(SOCK_NONBLOCK|SOCK_CLOEXEC)) {
+		errno = EINVAL;
+		return -1;
+	}
 	if (len) {
 		the_length = *len;
 		if (the_length < 0) {
