@@ -399,8 +399,7 @@ __attribute__((visibility("default")))
 int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
 	socklen_t the_length = 0;
 	if (flags & ~(SOCK_NONBLOCK|SOCK_CLOEXEC)) {
-		errno = EINVAL;
-		return -1;
+		goto real_accept;
 	}
 	if (len) {
 		the_length = *len;
