@@ -112,6 +112,7 @@ static int bind_to_ll(int fd, const struct sockaddr_in6 *addr, int is_connect) {
 	return real_bind(fd, (struct sockaddr *) &modified_address, sizeof(modified_address));
 }
 static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, int is_connect) {
+	int saved_errno = errno;
 	/* We should only act on a very narrow set of circumstances:
 	 * addr actually represents an AF_INET6 socket address
 	 * sin6_scope_id is zero
@@ -227,13 +228,20 @@ static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, i
 	if (orig_flags2 == -1) return -1;
 
 	int new_socket_fd = -1;
+	int connect_einprogress = 0;
 	if (is_connect) {
 		/* "Connect" to the requested socket address */
 		if (do_stream) {
 			/* Easy: simply connect to the socket */
 			new_socket_fd = socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC|((orig_flags & O_NONBLOCK) ? SOCK_NONBLOCK : 0), 0);
 			if (new_socket_fd == -1) return -1;
-			if (real_connect(new_socket_fd, (struct sockaddr *) &result, sizeof(result)) == 0) goto connect_succeeded;
+			int connect_result = real_connect(new_socket_fd, (struct sockaddr *) &result, sizeof(result));
+			if (connect_result == 0) {
+				goto connect_succeeded;
+			} else if ((connect_result < 0) && (errno == EINPROGRESS)) {
+				connect_einprogress = 1;
+				goto connect_succeeded;
+			}
 		} else {
 			if (enable_connect >= 2) {
 				/* This is a bit more interesting. Create a socketpair, simulating a connection.
@@ -292,6 +300,7 @@ bind_succeeded:
 		socket_string[sizeof(result.sun_path)] = 0;
 		chmod(socket_string, 0660);
 	}
+	errno = saved_errno; /* Here, and not below, because connect could legitimately return EINPROGRESS. */
 connect_succeeded:
 	/* And replace the original socket under the hood */
 	if (dup3(new_socket_fd, fd, (orig_flags2 & FD_CLOEXEC) ? O_CLOEXEC : 0) != fd) {
@@ -299,8 +308,9 @@ connect_succeeded:
 		return -1;
 	}
 	close(new_socket_fd);
-	return 0;
+	return connect_einprogress ? -1 : 0;
 do_real_bind:
+	errno = saved_errno;
 	if (is_connect) {
 		return real_connect(fd, addr, len);
 	}
