@@ -148,6 +148,7 @@ static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, i
 		} else if (((a_host & 0xfffe0000) == 0x7fb40000) && skbox_check_port_filter(p_host, filter_127180)) {
 			addr6->sin6_addr.s6_addr16[6] = htons(4000 + ((a_host & 0xff00) >> 8));
 			addr6->sin6_addr.s6_addr16[7] = htons(a_host & 0xff);
+			if (a_host & 0x10000) do_stream = 1;
 			alt_addr_mode = 1;
 			alt_mode = 2;
 			goto skip_fe8f_check;
