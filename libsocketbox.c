@@ -1,6 +1,7 @@
 #include "libsocketbox.h"
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -83,4 +84,68 @@ int skbox_getsockopt_integer(int fd, int level, int opt) {
 	if (getsockopt(fd, level, opt, &buf, &l)) return -1;
 	if (l != sizeof(int)) return -1;
 	return buf;
+}
+int skbox_parse_port_filter(const char *filter, uint16_t result[32]) {
+	if (!filter) return 0; /* filter == NULL */
+	if (filter[0] == 0) return 0; /* filter == "" */
+	char *filter_s = strdup(filter);
+	if (filter_s == NULL) return -1;
+	char *saveptr = NULL;
+	char *first = strtok_r(filter_s, ",", &saveptr);
+	if (!first) {
+		free(filter_s);
+		return 0;
+	}
+	unsigned long first_int = strtoul(first, NULL, 0);
+	if (first_int > 65535) {
+		goto fail;
+	}
+	char *second = strtok_r(NULL, ",", &saveptr);
+	if (!second) {
+		result[0] = first_int;
+		result[1] = first_int;
+		result[2] = 0;
+		goto success;
+	}
+	unsigned long second_int = strtoul(second, NULL, 0);
+	if (second_int > 65535) {
+		goto fail;
+	}
+	result[0] = first_int;
+	result[1] = second_int;
+	for (int i = 2; i < 32; i++) {
+		char *next = strtok_r(NULL, ",", &saveptr);
+		if (!next) {
+			result[i] = 0;
+			goto success;
+		}
+		unsigned long next_int = strtoul(next, NULL, 0);
+		if ((next_int == 0) || (next_int > 65535)) {
+			goto fail;
+		}
+		result[i] = next_int;
+	}
+	char *overflow_i = strtok_r(NULL, ",", &saveptr);
+	if (overflow_i) goto fail;
+success:
+	free(filter_s);
+	return 1;
+fail:
+	free(filter_s);
+	return -1;
+}
+int skbox_check_port_filter(uint16_t port_to_test, const uint16_t filter[32]) {
+	if (port_to_test == 0) {
+		return 0;
+	}
+	if ((port_to_test & 1) == 0) /* even */ {
+		if (port_to_test < filter[1]) return 1;
+	} else /* odd */ {
+		if (port_to_test < filter[0]) return 1;
+	}
+	for (int i = 2; i < 32; i++) {
+		if (filter[i] == 0) return 0;
+		if (port_to_test == filter[i]) return 1;
+	}
+	return 0;
 }

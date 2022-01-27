@@ -13,6 +13,7 @@
 #include <limits.h>
 #include <syscall.h>
 #include <sched.h>
+#include <stdio.h>
 #define SKBOX_PATH_MAX 256
 static int (*real_bind)(int, const struct sockaddr *, socklen_t) = NULL;
 static int (*real_connect)(int, const struct sockaddr *, socklen_t) = NULL;
@@ -34,6 +35,10 @@ static int enable_block_listen = 1;
 static int enable_strict_socket_mode = 2;
 static int enable_yield_counter = 0;
 static volatile uint32_t yield_counter = 0;
+static uint16_t filter_fe8f[32] = {0};
+static uint16_t filter_127180[32] = {0};
+static uint16_t filter_wildcard4[32] = {0};
+static uint16_t filter_wildcard6[32] = {0};
 /*
 static const char *prefixes[] = {
 	"./skbox-",
@@ -123,12 +128,42 @@ static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, i
 	 * socket's type is SOCK_STREAM
 	 * FIXME: link local connect hack
 	 */
+	int alt_addr_mode = 0; /* 0 = fe8f::/94, 1 = 127.180.0.0/15, 2 = ::/128, 3 = 0.0.0.0 */
+	uint16_t p_host = 0;
+	struct sockaddr_in6 addr6_buf = {0};
+	struct sockaddr_in6 *addr6 = &addr6_buf;
+	int do_stream = 0;
+	int alt_mode = 0;
+	if ((len == sizeof(struct sockaddr_in)) && (!is_connect)) {
+		if (addr->sa_family != AF_INET) goto do_real_bind;
+		struct sockaddr_in addr4_buf;
+		memcpy(&addr4_buf, addr, sizeof(struct sockaddr_in));
+		uint32_t a_host = ntohl(addr4_buf.sin_addr.s_addr);
+		p_host = ntohs(addr4_buf.sin_port);
+		if ((a_host == 0) && skbox_check_port_filter(p_host, filter_wildcard4)) {
+			addr6->sin6_addr.s6_addr16[6] = 4;
+			alt_addr_mode = 3;
+			alt_mode = 2;
+			goto skip_fe8f_check;
+		} else if (((a_host & 0xfffe0000) == 0x7fb40000) && skbox_check_port_filter(p_host, filter_127180)) {
+			addr6->sin6_addr.s6_addr16[6] = htons(4000 + ((a_host & 0xff00) >> 8));
+			addr6->sin6_addr.s6_addr16[7] = htons(a_host & 0xff);
+			alt_addr_mode = 1;
+			alt_mode = 2;
+			goto skip_fe8f_check;
+		}
+	}
 	if (len != sizeof(struct sockaddr_in6)) goto do_real_bind;
 	if (addr->sa_family != AF_INET6) goto do_real_bind;
-	struct sockaddr_in6 addr6_buf;
 	memcpy(&addr6_buf, addr, sizeof(struct sockaddr_in6));
-	const struct sockaddr_in6 *addr6 = &addr6_buf;
 	if (!enable_override_scope_id && !!addr6->sin6_scope_id) goto do_real_bind;
+	if ((!is_connect) && IN6_IS_ADDR_UNSPECIFIED(&addr6->sin6_addr)) {
+		p_host = ntohs(addr6->sin6_port);
+		if (!skbox_check_port_filter(p_host, filter_wildcard6)) goto do_real_bind;
+		alt_addr_mode = 2;
+		alt_mode = 2;
+		goto skip_fe8f_check;
+	}
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 	if (addr6->sin6_addr.s6_addr32[0] == 0x01008ffe) return bind_to_ll(fd, addr6, is_connect);
 	if (addr6->sin6_addr.s6_addr32[0] != 0x8ffe) goto do_real_bind;
@@ -139,25 +174,12 @@ static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, i
 #error Whatever
 #endif
 	if (!addr6->sin6_port) goto do_real_bind;
-	uint16_t p_host = ntohs(addr6->sin6_port);
-	if ((!is_connect) && ((p_host == 0) || (p_host >= 1024))) goto do_real_bind;
-	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_TYPE) != SOCK_STREAM) goto do_real_bind;
-	/* if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN) != AF_INET6) goto do_real_bind; */
-	/* fix guacd bug */
-	int sock_domain = skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN);
-	switch(sock_domain) {
-		case AF_INET:
-		case AF_INET6:
-			break;
-		default:
-			goto do_real_bind;
-	}
+	p_host = ntohs(addr6->sin6_port);
+	if ((!is_connect) && !skbox_check_port_filter(p_host, filter_fe8f)) goto do_real_bind;
 	/* Middle 64 bits are reserved for future use. Check that they're zero for the moment. */
 	if (addr6->sin6_addr.s6_addr32[1]) goto do_real_bind;
 	// if (addr6->sin6_addr.s6_addr32[2]) goto do_real_bind;
 	uint32_t second_part_of_address = ntohl(addr6->sin6_addr.s6_addr32[2]);
-	int do_stream = 0;
-	int alt_mode = 0;
 	switch (second_part_of_address) {
 		case 0:
 			break;
@@ -175,6 +197,18 @@ static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, i
 			goto do_real_bind;
 			break;
 	}
+skip_fe8f_check:
+	if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_TYPE) != SOCK_STREAM) goto do_real_bind;
+	/* if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN) != AF_INET6) goto do_real_bind; */
+	/* fix guacd bug */
+	int sock_domain = skbox_getsockopt_integer(fd, SOL_SOCKET, SO_DOMAIN);
+	switch(sock_domain) {
+		case AF_INET:
+		case AF_INET6:
+			break;
+		default:
+			goto do_real_bind;
+	}
 	struct sockaddr_un result = {AF_UNIX, {0}};
 	if (alt_mode) {
 		if (!has_directory2) goto do_real_bind;
@@ -183,6 +217,9 @@ static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, i
 		int16tonum(ntohs(addr6->sin6_addr.s6_addr16[6]), &filename[1]);
 		int16tonum(ntohs(addr6->sin6_addr.s6_addr16[7]), &filename[7]);
 		int16tonum(p_host, &filename[13]);
+		if (alt_mode == 2) {
+			filename[1] = 'X';
+		}
 		write_string_to_buf(result.sun_path, sizeof(result.sun_path), directory2_path, filename);
 	} else {
 		if (directory_fd != -10) goto do_real_bind;
@@ -561,5 +598,61 @@ void __socketbox_preload_init(void) {
 	stealth_mode = getenv("SKBOX_SCHED_YIELD");
 	if (stealth_mode && (stealth_mode[0] == '1')) {
 		enable_yield_counter = 1;
+	}
+	stealth_mode = getenv("SKBOX_PORT_FILTER_IPV6");
+	switch (skbox_parse_port_filter(stealth_mode, filter_fe8f)) {
+		case 1: /* parsed successfully */
+			break;
+		case 0: /* use defaults */
+			filter_fe8f[0] = 1024;
+			filter_fe8f[1] = 1024;
+			filter_fe8f[2] = 0;
+			break;
+		default:
+			fprintf(stderr, "[libsocketbox-preload] Invalid IPv6 port filter: %s\n", stealth_mode);
+			abort();
+			return;
+	}
+	stealth_mode = getenv("SKBOX_PORT_FILTER_IPV4");
+	switch (skbox_parse_port_filter(stealth_mode, filter_127180)) {
+		case 1: /* parsed successfully */
+			break;
+		case 0:
+			filter_127180[0] = 0;
+			filter_127180[1] = 0;
+			filter_127180[2] = 0;
+			break;
+		default:
+			fprintf(stderr, "[libsocketbox-preload] Invalid IPv4 port filter: %s\n", stealth_mode);
+			abort();
+			return;
+	}
+	stealth_mode = getenv("SKBOX_PORT_FILTER_IPV6_WILDCARD");
+	switch (skbox_parse_port_filter(stealth_mode, filter_wildcard6)) {
+		case 1: /* parsed successfully */
+			break;
+		case 0: /* use defaults */
+			filter_wildcard6[0] = 0;
+			filter_wildcard6[1] = 0;
+			filter_wildcard6[2] = 0;
+			break;
+		default:
+			fprintf(stderr, "[libsocketbox-preload] Invalid IPv6 wildcard port filter: %s\n", stealth_mode);
+			abort();
+			return;
+	}
+	stealth_mode = getenv("SKBOX_PORT_FILTER_IPV4_WILDCARD");
+	switch (skbox_parse_port_filter(stealth_mode, filter_wildcard4)) {
+		case 1: /* parsed successfully */
+			break;
+		case 0: /* use defaults */
+			filter_wildcard4[0] = 0;
+			filter_wildcard4[1] = 0;
+			filter_wildcard4[2] = 0;
+			break;
+		default:
+			fprintf(stderr, "[libsocketbox-preload] Invalid IPv4 wildcard port filter: %s\n", stealth_mode);
+			abort();
+			return;
 	}
 }
