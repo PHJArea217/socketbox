@@ -141,7 +141,7 @@ static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, i
 		uint32_t a_host = ntohl(addr4_buf.sin_addr.s_addr);
 		p_host = ntohs(addr4_buf.sin_port);
 		if ((a_host == 0) && skbox_check_port_filter(p_host, filter_wildcard4)) {
-			addr6->sin6_addr.s6_addr16[6] = 4;
+			addr6->sin6_addr.s6_addr16[6] = htons(4);
 			alt_addr_mode = 3;
 			alt_mode = 2;
 			goto skip_fe8f_check;
