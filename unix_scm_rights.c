@@ -29,6 +29,7 @@ int skbox_receive_fd_from_socket_p(int fd, int notify_disconnect) {
 			if (r < 0) {
 				switch (errno) {
 					case ECONNRESET:
+					case ENOTCONN:
 						break;
 					default:
 						dc = 0;
@@ -42,8 +43,12 @@ int skbox_receive_fd_from_socket_p(int fd, int notify_disconnect) {
 					return -1;
 				}
 				if (sock_type != SOCK_DGRAM) {
-					/* I would have ideally used SIGHUP here, but some
-					 * daemons reload themselves instead of terminating */
+					/*
+					 * I would have ideally used SIGHUP here, but some
+					 * daemons reload themselves instead of terminating
+					 * Doesn't work for apps where accept() is called in
+					 * subprocess (not thread), such as nginx or php-fpm
+					 */
 					if (!notify_disconnect) {
 						kill(0, SIGTERM);
 					}
