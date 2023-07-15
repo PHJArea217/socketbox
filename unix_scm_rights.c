@@ -24,23 +24,35 @@ int skbox_receive_fd_from_socket_p(int fd, int notify_disconnect) {
 		m.msg_control = anc_data;
 		m.msg_controllen = 1280;
 		ssize_t r = recvmsg(fd, &m, MSG_CMSG_CLOEXEC);
-		if (r < 0) break;
-		if (r == 0) {
-			int sock_type = skbox_getsockopt_integer(fd, SOL_SOCKET, SO_TYPE);
-			if (sock_type < 0) {
-				errno = EINVAL;
-				return -1;
-			}
-			if (sock_type != SOCK_DGRAM) {
-				/* I would have ideally used SIGHUP here, but some
-				 * daemons reload themselves instead of terminating */
-				if (!notify_disconnect) {
-					kill(0, SIGTERM);
+		if (r <= 0) {
+			int dc = 1;
+			if (r < 0) {
+				switch (errno) {
+					case ECONNRESET:
+						break;
+					default:
+						dc = 0;
+						break;
 				}
-				errno = ENOLINK;
-				return -1;
+			}
+			if (dc) { /* r == 0 or (r == -1 and errno is ECONNRESET) */
+				int sock_type = skbox_getsockopt_integer(fd, SOL_SOCKET, SO_TYPE);
+				if (sock_type < 0) {
+					errno = EINVAL;
+					return -1;
+				}
+				if (sock_type != SOCK_DGRAM) {
+					/* I would have ideally used SIGHUP here, but some
+					 * daemons reload themselves instead of terminating */
+					if (!notify_disconnect) {
+						kill(0, SIGTERM);
+					}
+					errno = ENOLINK;
+					return -1;
+				}
 			}
 		}
+		if (r < 0) break;
 		int has_fd_to_return = 0;
 		int fd_to_return = -1;
 		for (struct cmsghdr *c = CMSG_FIRSTHDR(&m); c; c = CMSG_NXTHDR(&m, c)) {
