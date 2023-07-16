@@ -287,6 +287,7 @@ int main(int argc, char **argv) {
 		perror("epoll_ctl");
 		return -1;
 	}
+	int listen_socket_enabled = 1;
 	while (1) {
 		struct epoll_event events[100] = {0};
 		int epoll_result = epoll_wait(epoll_fd, events, 100, -1);
@@ -310,6 +311,7 @@ int main(int argc, char **argv) {
 					int newfd = -1;
 					if (socketbox_listen || recvmsg_only) {
 						newfd = skbox_receive_fd_from_socket(listen_fd);
+						if (newfd < 0) goto fail_newfd;
 						if (skbox_make_fd_nonblocking(newfd)) {
 							close(newfd);
 							break;
@@ -318,8 +320,18 @@ int main(int argc, char **argv) {
 					} else {
 						newfd = accept4(listen_fd, (struct sockaddr *) &conn_remote_addr, &(socklen_t) {sizeof(struct sockaddr_in6)}, SOCK_NONBLOCK);
 					}
+fail_newfd:
 					if (conn_remote_addr.sin6_family != AF_INET6) memset(&conn_remote_addr, 0, sizeof(conn_remote_addr));
-					if (newfd == -1) {
+					if (newfd < 0) {
+						switch (errno) {
+						case EMFILE:
+							if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, listen_fd, &(struct epoll_event) {0, {.ptr = &accepting_socket_entry}})) {
+								perror("epoll_ctl");
+								return -1;
+							}
+							listen_socket_enabled = 0;
+							break;
+						}
 						break;
 					}
 					state = calloc(sizeof(struct fd_relay_entry), 1);
@@ -534,6 +546,13 @@ int main(int argc, char **argv) {
 				free(e->efd_ptr_in);
 				free(e->efd_ptr_out);
 				free(e);
+				if (listening_socket_enabled == 0) {
+					if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, listen_fd, &(struct epoll_event) {EPOLLIN, {.ptr = &accepting_socket_entry}})) {
+						perror("epoll_ctl");
+						return -1;
+					}
+					listening_socket_enabled = 1;
+				}
 				break;
 			}
 		}
