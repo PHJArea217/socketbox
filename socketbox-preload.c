@@ -280,6 +280,7 @@ skip_fe8f_check:
 				connect_einprogress = 1;
 				goto connect_succeeded;
 			}
+			close(new_socket_fd);
 		} else {
 			if (enable_connect >= 2) {
 				/* This is a bit more interesting. Create a socketpair, simulating a connection.

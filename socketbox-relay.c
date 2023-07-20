@@ -546,12 +546,12 @@ fail_newfd:
 				free(e->efd_ptr_in);
 				free(e->efd_ptr_out);
 				free(e);
-				if (listening_socket_enabled == 0) {
+				if (listen_socket_enabled == 0) {
 					if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, listen_fd, &(struct epoll_event) {EPOLLIN, {.ptr = &accepting_socket_entry}})) {
 						perror("epoll_ctl");
 						return -1;
 					}
-					listening_socket_enabled = 1;
+					listen_socket_enabled = 1;
 				}
 				break;
 			}
