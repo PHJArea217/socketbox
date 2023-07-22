@@ -27,6 +27,7 @@ volatile static int has_directory2 = 0;
 static char directory_path[SKBOX_PATH_MAX+1] = {0};
 static int enable_stealth_mode = 0;
 static int enable_connect = 0;
+static int enable_connect_b = 0;
 static int enable_override_scope_id = 0;
 static int enable_accept_hack = 0;
 static int enable_getpeername_protection = 2;
@@ -116,7 +117,7 @@ static int bind_to_ll(int fd, const struct sockaddr_in6 *addr, int is_connect) {
 	}
 	return real_bind(fd, (struct sockaddr *) &modified_address, sizeof(modified_address));
 }
-static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, int is_connect) {
+static int my_bind_connect(int fd, const struct sockaddr *orig_addr, socklen_t orig_len, int is_connect) {
 	int saved_errno = errno;
 	/* We should only act on a very narrow set of circumstances:
 	 * addr actually represents an AF_INET6 socket address
@@ -134,18 +135,37 @@ static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, i
 	struct sockaddr_in6 *addr6 = &addr6_buf;
 	int do_stream = 0;
 	int alt_mode = 0;
-	if ((len == sizeof(struct sockaddr_in)) && (!is_connect)) {
-		if (addr->sa_family != AF_INET) goto do_real_bind;
+	/* First, check the socket address, to see that it's either IPv4 or IPv6 */
+	if ((orig_len == sizeof(struct sockaddr_in)) && (orig_addr->sa_family == AF_INET)) {
 		struct sockaddr_in addr4_buf;
-		memcpy(&addr4_buf, addr, sizeof(struct sockaddr_in));
-		uint32_t a_host = ntohl(addr4_buf.sin_addr.s_addr);
-		p_host = ntohs(addr4_buf.sin_port);
-		if ((a_host == 0) && skbox_check_port_filter(p_host, filter_wildcard4)) {
+		memcpy(&addr4_buf, orig_addr, sizeof(struct sockaddr_in));
+		addr6_buf.sin6_family = AF_INET6;
+		/* convert to IPv4-mapped IPv6 equivalent sockaddr_in6 */
+		addr6_buf.sin6_port = addr4_buf.sin_port;
+		addr6_buf.sin6_addr.s6_addr16[5] = 0xffff;
+		addr6_buf.sin6_addr.s6_addr32[3] = addr4_buf.sin_addr.s_addr;
+	} else if ((orig_len == sizeof(struct sockaddr_in6)) && (orig_addr->sa_family == AF_INET6)) {
+		memcpy(&addr6_buf, orig_addr, sizeof(struct sockaddr_in6));
+	} else {
+		goto do_real_bind;
+	}
+	if (!enable_override_scope_id && !!addr6->sin6_scope_id) goto do_real_bind;
+	p_host = ntohs(addr6->sin6_port);
+	if ((!is_connect) && IN6_IS_ADDR_UNSPECIFIED(&addr6->sin6_addr)) {
+		if (!skbox_check_port_filter(p_host, filter_wildcard6)) goto do_real_bind;
+		alt_addr_mode = 2;
+		alt_mode = 2;
+		goto skip_fe8f_check;
+	}
+	if (IN6_IS_ADDR_V4MAPPED(&addr6->sin6_addr)) {
+		uint32_t a_host = ntohl(addr6_buf.sin6_addr.s6_addr32[3]);
+		int is_b = is_connect ? enable_connect_b : skbox_check_port_filter(p_host, filter_127180);
+		if ((!is_connect) && (a_host == 0) && skbox_check_port_filter(p_host, filter_wildcard4)) {
 			addr6->sin6_addr.s6_addr16[6] = htons(4);
 			alt_addr_mode = 3;
 			alt_mode = 2;
 			goto skip_fe8f_check;
-		} else if (((a_host & 0xfffe0000) == 0x7fb40000) && skbox_check_port_filter(p_host, filter_127180)) {
+		} else if (((a_host & 0xfffe0000) == 0x7fb40000) && is_b) {
 			addr6->sin6_addr.s6_addr16[6] = htons(4000 + ((a_host & 0xff00) >> 8));
 			addr6->sin6_addr.s6_addr16[7] = htons(a_host & 0xff);
 			if (a_host & 0x10000) do_stream = 1;
@@ -153,17 +173,7 @@ static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, i
 			alt_mode = 2;
 			goto skip_fe8f_check;
 		}
-	}
-	if (len != sizeof(struct sockaddr_in6)) goto do_real_bind;
-	if (addr->sa_family != AF_INET6) goto do_real_bind;
-	memcpy(&addr6_buf, addr, sizeof(struct sockaddr_in6));
-	if (!enable_override_scope_id && !!addr6->sin6_scope_id) goto do_real_bind;
-	if ((!is_connect) && IN6_IS_ADDR_UNSPECIFIED(&addr6->sin6_addr)) {
-		p_host = ntohs(addr6->sin6_port);
-		if (!skbox_check_port_filter(p_host, filter_wildcard6)) goto do_real_bind;
-		alt_addr_mode = 2;
-		alt_mode = 2;
-		goto skip_fe8f_check;
+		goto do_real_bind;
 	}
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 	if (addr6->sin6_addr.s6_addr32[0] == 0x01008ffe) return bind_to_ll(fd, addr6, is_connect);
@@ -174,8 +184,7 @@ static int my_bind_connect(int fd, const struct sockaddr *addr, socklen_t len, i
 #else
 #error Whatever
 #endif
-	if (!addr6->sin6_port) goto do_real_bind;
-	p_host = ntohs(addr6->sin6_port);
+	if (!p_host) goto do_real_bind;
 	if ((!is_connect) && !skbox_check_port_filter(p_host, filter_fe8f)) goto do_real_bind;
 	/* Middle 64 bits are reserved for future use. Check that they're zero for the moment. */
 	if (addr6->sin6_addr.s6_addr32[1]) goto do_real_bind;
@@ -351,9 +360,9 @@ connect_succeeded:
 do_real_bind:
 	errno = saved_errno;
 	if (is_connect) {
-		return real_connect(fd, addr, len);
+		return real_connect(fd, orig_addr, orig_len);
 	}
-	return real_bind(fd, addr, len);
+	return real_bind(fd, orig_addr, orig_len);
 }
 __attribute__((visibility("default")))
 int bind(int fd, const struct sockaddr *addr, socklen_t len) {
@@ -554,6 +563,10 @@ void __socketbox_preload_init(void) {
 		enable_stealth_mode = 1;
 	}
 	stealth_mode = getenv("SKBOX_ENABLE_CONNECT");
+	if (stealth_mode && (stealth_mode[0] == 'b')) {
+		enable_connect_b = 1;
+		stealth_mode++;
+	}
 	if (stealth_mode && (stealth_mode[0] >= '1') && (stealth_mode[0] <= '9')) {
 		enable_connect = stealth_mode[0] - '0';
 	}
