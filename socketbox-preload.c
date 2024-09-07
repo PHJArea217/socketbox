@@ -14,40 +14,7 @@
 #include <syscall.h>
 #include <sched.h>
 #include <stdio.h>
-#define SKBOX_PATH_MAX 256
-static int (*real_bind)(int, const struct sockaddr *, socklen_t) = NULL;
-static int (*real_connect)(int, const struct sockaddr *, socklen_t) = NULL;
-static int (*real_listen)(int, int) = NULL;
-static int (*real_accept4)(int, struct sockaddr *, socklen_t *, int) = NULL;
-static int (*real_getsockname)(int, struct sockaddr *, socklen_t *) = NULL;
-static int (*real_getpeername)(int, struct sockaddr *, socklen_t *) = NULL;
-volatile static int directory_fd = -1;
-static char * volatile directory2_path = NULL;
-volatile static int has_directory2 = 0;
-static char directory_path[SKBOX_PATH_MAX+1] = {0};
-static int enable_stealth_mode = 0;
-static int enable_connect = 0;
-static int enable_connect_b = 0;
-static int enable_override_scope_id = 0;
-static int enable_accept_hack = 0;
-static int enable_getpeername_protection = 2;
-static int enable_stream_seqpacket = 0;
-static int enable_block_listen = 1;
-static int enable_strict_socket_mode = 2;
-static int enable_yield_counter = 0;
-static volatile uint32_t yield_counter = 0;
-static uint16_t filter_fe8f[32] = {0};
-static uint16_t filter_127180[32] = {0};
-static uint16_t filter_wildcard4[32] = {0};
-static uint16_t filter_wildcard6[32] = {0};
-/*
-static const char *prefixes[] = {
-	"./skbox-",
-	"/run/socketbox/skbox-",
-	"/tmp/socketbox/skbox-",
-	"/proc/self/fd/3/socketbox/skbox-"
-};
-*/
+#include "socketbox-preload.h"
 static void int16tonum(uint16_t num, char *result) {
 	const char *numbers = "0123456789";
 	result[4] = numbers[num % 10];
@@ -60,6 +27,15 @@ static void int16tonum(uint16_t num, char *result) {
 	num = num / 10;
 	result[0] = numbers[num % 10];
 }
+static struct socketbox_preload globals_m = {
+	.int16tonum = int16tonum,
+	.directory_fd = -1,
+	.enable_getpeername_protection = 2,
+	.enable_block_listen = 1,
+	.enable_strict_socket_mode = 2
+};
+struct socketbox_preload *socketbox_preload_globals = &globals_m;
+#define globals socketbox_preload_globals
 static size_t write_string_to_buf(char *buf, size_t n, const char *s1, const char *s2) {
 	size_t dptr = 0;
 	const char *a = s1;
@@ -80,31 +56,31 @@ static size_t write_string_to_buf(char *buf, size_t n, const char *s1, const cha
 }
 __attribute__((visibility("default")))
 int getsockname(int fd, struct sockaddr *addr, socklen_t *len) {
-	if (enable_getpeername_protection) {
+	if (globals->enable_getpeername_protection) {
 		if ((!!addr) && (!!len)) {
 			socklen_t l = *len;
 			if (l > 0) {
-				if ((enable_getpeername_protection >= 2) || (l == sizeof(struct sockaddr_in)) || (l == sizeof(struct sockaddr_in6))) {
+				if ((globals->enable_getpeername_protection >= 2) || (l == sizeof(struct sockaddr_in)) || (l == sizeof(struct sockaddr_in6))) {
 					memset(addr, 0, l);
 				}
 			}
 		}
 	}
-	return real_getsockname(fd, addr, len);
+	return globals->real_getsockname(fd, addr, len);
 }
 __attribute__((visibility("default")))
 int getpeername(int fd, struct sockaddr *addr, socklen_t *len) {
-	if (enable_getpeername_protection) {
+	if (globals->enable_getpeername_protection) {
 		if ((!!addr) && (!!len)) {
 			socklen_t l = *len;
 			if (l > 0) {
-				if ((enable_getpeername_protection >= 2) || (l == sizeof(struct sockaddr_in)) || (l == sizeof(struct sockaddr_in6))) {
+				if ((globals->enable_getpeername_protection >= 2) || (l == sizeof(struct sockaddr_in)) || (l == sizeof(struct sockaddr_in6))) {
 					memset(addr, 0, l);
 				}
 			}
 		}
 	}
-	return real_getpeername(fd, addr, len);
+	return globals->real_getpeername(fd, addr, len);
 }
 /* Preconditions: sin6_scope_id == 0, sin6_addr in fe8f:1::/32 */
 static int bind_to_ll(int fd, const struct sockaddr_in6 *addr, int is_connect) {
@@ -113,9 +89,9 @@ static int bind_to_ll(int fd, const struct sockaddr_in6 *addr, int is_connect) {
 	modified_address.sin6_scope_id = ntohl(addr->sin6_addr.s6_addr32[1]);
 	memcpy(&modified_address.sin6_addr, "\376\200\0\0\0\0\0\0", 8); /* fe80::/64 */
 	if (is_connect) {
-		return real_connect(fd, (struct sockaddr *) &modified_address, sizeof(modified_address));
+		return globals->real_connect(fd, (struct sockaddr *) &modified_address, sizeof(modified_address));
 	}
-	return real_bind(fd, (struct sockaddr *) &modified_address, sizeof(modified_address));
+	return globals->real_bind(fd, (struct sockaddr *) &modified_address, sizeof(modified_address));
 }
 static int my_bind_connect(int fd, const struct sockaddr *orig_addr, socklen_t orig_len, int is_connect) {
 	int saved_errno = errno;
@@ -149,18 +125,18 @@ static int my_bind_connect(int fd, const struct sockaddr *orig_addr, socklen_t o
 	} else {
 		goto do_real_bind;
 	}
-	if (!enable_override_scope_id && !!addr6->sin6_scope_id) goto do_real_bind;
+	if (!globals->enable_override_scope_id && !!addr6->sin6_scope_id) goto do_real_bind;
 	p_host = ntohs(addr6->sin6_port);
 	if ((!is_connect) && IN6_IS_ADDR_UNSPECIFIED(&addr6->sin6_addr)) {
-		if (!skbox_check_port_filter(p_host, filter_wildcard6)) goto do_real_bind;
+		if (!skbox_check_port_filter(p_host, globals->filter_wildcard6)) goto do_real_bind;
 		alt_addr_mode = 2;
 		alt_mode = 2;
 		goto skip_fe8f_check;
 	}
 	if (IN6_IS_ADDR_V4MAPPED(&addr6->sin6_addr)) {
 		uint32_t a_host = ntohl(addr6_buf.sin6_addr.s6_addr32[3]);
-		int is_b = is_connect ? enable_connect_b : skbox_check_port_filter(p_host, filter_127180);
-		if ((!is_connect) && (a_host == 0) && skbox_check_port_filter(p_host, filter_wildcard4)) {
+		int is_b = is_connect ? globals->enable_connect_b : skbox_check_port_filter(p_host, globals->filter_127180);
+		if ((!is_connect) && (a_host == 0) && skbox_check_port_filter(p_host, globals->filter_wildcard4)) {
 			addr6->sin6_addr.s6_addr16[6] = htons(4);
 			alt_addr_mode = 3;
 			alt_mode = 2;
@@ -185,7 +161,7 @@ static int my_bind_connect(int fd, const struct sockaddr *orig_addr, socklen_t o
 #error Whatever
 #endif
 	if (!p_host) goto do_real_bind;
-	if ((!is_connect) && !skbox_check_port_filter(p_host, filter_fe8f)) goto do_real_bind;
+	if ((!is_connect) && !skbox_check_port_filter(p_host, globals->filter_fe8f)) goto do_real_bind;
 	/* Middle 64 bits are reserved for future use. Check that they're zero for the moment. */
 	if (addr6->sin6_addr.s6_addr32[1]) goto do_real_bind;
 	// if (addr6->sin6_addr.s6_addr32[2]) goto do_real_bind;
@@ -221,7 +197,7 @@ skip_fe8f_check:
 	}
 	struct sockaddr_un result = {AF_UNIX, {0}};
 	if (alt_mode) {
-		if (!has_directory2) goto do_real_bind;
+		if (!globals->has_directory2) goto do_real_bind;
 		__sync_synchronize();
 		char filename[20] = "/XXXXX/XXXXX_XXXXX\0";
 		int16tonum(ntohs(addr6->sin6_addr.s6_addr16[6]), &filename[1]);
@@ -230,16 +206,16 @@ skip_fe8f_check:
 		if (alt_mode == 2) {
 			filename[1] = 'X';
 		}
-		write_string_to_buf(result.sun_path, sizeof(result.sun_path), directory2_path, filename);
+		write_string_to_buf(result.sun_path, sizeof(result.sun_path), globals->directory2_path, filename);
 	} else {
-		if (directory_fd != -10) goto do_real_bind;
+		if (globals->directory_fd != -10) goto do_real_bind;
 		__sync_synchronize();
 		uint16_t dir_file = ntohs(addr6->sin6_addr.s6_addr16[6]);
 		char filename[20] = "/skbox_dir_XXXXX\0";
 		int16tonum(dir_file, &filename[11]);
 
 		char directory_full_path[SKBOX_PATH_MAX + 1] = {0};
-		size_t n = write_string_to_buf(directory_full_path, SKBOX_PATH_MAX, directory_path, filename);
+		size_t n = write_string_to_buf(directory_full_path, SKBOX_PATH_MAX, globals->directory_path, filename);
 		directory_full_path[n] = 0;
 		/*
 		 * This might actually be a security vulnerability
@@ -282,7 +258,7 @@ skip_fe8f_check:
 			/* Easy: simply connect to the socket */
 			new_socket_fd = socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC|((orig_flags & O_NONBLOCK) ? SOCK_NONBLOCK : 0), 0);
 			if (new_socket_fd == -1) return -1;
-			int connect_result = real_connect(new_socket_fd, (struct sockaddr *) &result, sizeof(result));
+			int connect_result = globals->real_connect(new_socket_fd, (struct sockaddr *) &result, sizeof(result));
 			if (connect_result == 0) {
 				goto connect_succeeded;
 			} else if ((connect_result < 0) && (errno == EINPROGRESS)) {
@@ -291,7 +267,7 @@ skip_fe8f_check:
 			}
 			close(new_socket_fd);
 		} else {
-			if (enable_connect >= 2) {
+			if (globals->enable_connect >= 2) {
 				/* This is a bit more interesting. Create a socketpair, simulating a connection.
 				 * Return one end as the "connected socket", the other side goes to the actual unix socket,
 				 * just like how socketbox itself would operate */
@@ -327,7 +303,7 @@ skip_fe8f_check:
 	/* Actually do the bind to the unix socket */
 	new_socket_fd = socket(AF_UNIX, (do_stream ? SOCK_STREAM : SOCK_DGRAM)|SOCK_CLOEXEC|((orig_flags & O_NONBLOCK) ? SOCK_NONBLOCK : 0), 0);
 	if (new_socket_fd == -1) return -1;
-	if (real_bind(new_socket_fd, (struct sockaddr *) &result, sizeof(result))) {
+	if (globals->real_bind(new_socket_fd, (struct sockaddr *) &result, sizeof(result))) {
 		if (errno == EADDRINUSE) {
 			char socket_string[sizeof(result.sun_path) + 1] = {0};
 			memcpy(socket_string, result.sun_path, sizeof(result.sun_path));
@@ -335,7 +311,7 @@ skip_fe8f_check:
 			struct stat s = {0};
 			if ((lstat(socket_string, &s) == 0) && ((s.st_mode & S_IFMT) == S_IFSOCK)) {
 				unlink(socket_string);
-				if (real_bind(new_socket_fd, (struct sockaddr *) &result, sizeof(result)) == 0) goto bind_succeeded;
+				if (globals->real_bind(new_socket_fd, (struct sockaddr *) &result, sizeof(result)) == 0) goto bind_succeeded;
 			}
 		}
 		close(new_socket_fd);
@@ -360,9 +336,9 @@ connect_succeeded:
 do_real_bind:
 	errno = saved_errno;
 	if (is_connect) {
-		return real_connect(fd, orig_addr, orig_len);
+		return globals->real_connect(fd, orig_addr, orig_len);
 	}
-	return real_bind(fd, orig_addr, orig_len);
+	return globals->real_bind(fd, orig_addr, orig_len);
 }
 __attribute__((visibility("default")))
 int bind(int fd, const struct sockaddr *addr, socklen_t len) {
@@ -370,8 +346,8 @@ int bind(int fd, const struct sockaddr *addr, socklen_t len) {
 }
 __attribute__((visibility("default")))
 int connect(int fd, const struct sockaddr *addr, socklen_t len) {
-	if (!enable_connect) {
-		return real_connect(fd, addr, len);
+	if (!globals->enable_connect) {
+		return globals->real_connect(fd, addr, len);
 	}
 	return my_bind_connect(fd, addr, len, 1);
 }
@@ -386,7 +362,7 @@ int listen(int fd, int backlog) {
 
 	switch (sock_domain) {
 		case AF_INET:
-			if (enable_block_listen) {
+			if (globals->enable_block_listen) {
 				struct sockaddr_in local_addr = {0};
 				socklen_t addr_size = sizeof(local_addr);
 				if (getsockname(fd, (struct sockaddr *) &local_addr, &addr_size)) {
@@ -403,10 +379,10 @@ int listen(int fd, int backlog) {
 					}
 				}
 			}
-			return real_listen(fd, backlog);
+			return globals->real_listen(fd, backlog);
 			break;
 		case AF_INET6:
-			if (enable_block_listen) {
+			if (globals->enable_block_listen) {
 				struct sockaddr_in6 local_addr2 = {0};
 				socklen_t addr_size = sizeof(local_addr2);
 				if (getsockname(fd, (struct sockaddr *) &local_addr2, &addr_size)) {
@@ -423,16 +399,16 @@ int listen(int fd, int backlog) {
 					}
 				}
 			}
-			return real_listen(fd, backlog);
+			return globals->real_listen(fd, backlog);
 			break;
 		case AF_UNIX:
 			if (sock_type == SOCK_DGRAM) {
 				return 0;
 			}
-			return real_listen(fd, backlog);
+			return globals->real_listen(fd, backlog);
 			break;
 	}
-	return real_listen(fd, backlog);
+	return globals->real_listen(fd, backlog);
 }
 static int check_socket_mode(int fd) {
 	/* AF_UNIX, SOCK_DGRAM */
@@ -442,7 +418,7 @@ static int check_socket_mode(int fd) {
 	switch (sock_type) {
 		case SOCK_STREAM:
 		case SOCK_SEQPACKET:
-			if (enable_stream_seqpacket) {
+			if (globals->enable_stream_seqpacket) {
 				if (skbox_getsockopt_integer(fd, SOL_SOCKET, SO_ACCEPTCONN) == 0) return 1;
 			}
 			break;
@@ -469,20 +445,20 @@ int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
 	if (!check_socket_mode(fd)) {
 		goto real_accept;
 	}
-	if (enable_yield_counter) {
-		uint32_t counter = __sync_fetch_and_add(&yield_counter, 1);
+	if (globals->enable_yield_counter) {
+		uint32_t counter = __sync_fetch_and_add(&globals->yield_counter, 1);
 		if ((counter % 7) == 0) {
 			sched_yield();
 		}
 	}
 	int new_fd = skbox_receive_fd_from_socket(fd);
 	if (new_fd == -1) return -1;
-	if (enable_strict_socket_mode) {
+	if (globals->enable_strict_socket_mode) {
 		if (skbox_getsockopt_integer(new_fd, SOL_SOCKET, SO_TYPE) != SOCK_STREAM) {
 			errno = EAGAIN;
 			goto close_fail;
 		}
-		if (enable_strict_socket_mode >= 2) {
+		if (globals->enable_strict_socket_mode >= 2) {
 			switch (skbox_getsockopt_integer(new_fd, SOL_SOCKET, SO_DOMAIN)) {
 				case AF_UNIX:
 				case AF_INET:
@@ -503,14 +479,14 @@ int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
 	if (fcntl(new_fd, F_SETFL, (flags & SOCK_NONBLOCK) ? (orig_flags | O_NONBLOCK) : (orig_flags & ~O_NONBLOCK))) goto close_fail;
 	if (fcntl(new_fd, F_SETFD, (flags & SOCK_CLOEXEC) ? (orig_flags2 | FD_CLOEXEC) : (orig_flags2 & ~FD_CLOEXEC))) goto close_fail;
 	if (!!addr && !!len) {
-		if (enable_getpeername_protection) {
+		if (globals->enable_getpeername_protection) {
 			if (the_length > 0) {
-				if ((enable_getpeername_protection >= 2) || (the_length == sizeof(struct sockaddr_in)) || (the_length == sizeof(struct sockaddr_in6))) {
+				if ((globals->enable_getpeername_protection >= 2) || (the_length == sizeof(struct sockaddr_in)) || (the_length == sizeof(struct sockaddr_in6))) {
 					memset(addr, 0, the_length);
 				}
 			}
 		}
-		if (enable_stealth_mode && (the_length > 0) && (skbox_getsockopt_integer(new_fd, SOL_SOCKET, SO_DOMAIN) == AF_UNIX)) {
+		if (globals->enable_stealth_mode && (the_length > 0) && (skbox_getsockopt_integer(new_fd, SOL_SOCKET, SO_DOMAIN) == AF_UNIX)) {
 			struct sockaddr_in6 fake_addr = {.sin6_family = AF_INET6, .sin6_port = 0, .sin6_addr = {{{0}}}, .sin6_scope_id = 0, .sin6_flowinfo = 0};
 			fake_addr.sin6_addr.s6_addr[15] = 1;
 			size_t limit = sizeof(struct sockaddr_in6);
@@ -523,11 +499,11 @@ int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
 	}
 	return new_fd;
 real_accept:
-	if (len == NULL) return real_accept4(fd, addr, len, flags);
+	if (len == NULL) return globals->real_accept4(fd, addr, len, flags);
 	socklen_t orig_len = *len;
-	if (orig_len == 0) return real_accept4(fd, addr, len, flags);
+	if (orig_len == 0) return globals->real_accept4(fd, addr, len, flags);
 	socklen_t f_len = orig_len;
-	int rv = real_accept4(fd, addr, &f_len, flags);
+	int rv = globals->real_accept4(fd, addr, &f_len, flags);
 	if ((rv >= 0) && (f_len > 0) && (orig_len > 0) && (f_len < orig_len)) {
 		/* Zero out the excess buffer, to prevent any data leakage
 		 * from not expecting the right address length */
@@ -546,82 +522,82 @@ int accept(int fd, struct sockaddr *addr, socklen_t *len) {
 // __attribute__((visibility("default")))
 __attribute__((constructor))
 void __socketbox_preload_init(void) {
-	real_bind = dlsym(RTLD_NEXT, "bind");
-	if (!real_bind) abort();
-	real_listen = dlsym(RTLD_NEXT, "listen");
-	if (!real_listen) abort();
-	real_connect = dlsym(RTLD_NEXT, "connect");
-	if (!real_connect) abort();
-	real_accept4 = dlsym(RTLD_NEXT, "accept4");
-	if (!real_accept4) abort();
-	real_getsockname = dlsym(RTLD_NEXT, "getsockname");
-	if (!real_getsockname) abort();
-	real_getpeername = dlsym(RTLD_NEXT, "getpeername");
-	if (!real_getpeername) abort();
+	globals->real_bind = dlsym(RTLD_NEXT, "bind");
+	if (!globals->real_bind) abort();
+	globals->real_listen = dlsym(RTLD_NEXT, "listen");
+	if (!globals->real_listen) abort();
+	globals->real_connect = dlsym(RTLD_NEXT, "connect");
+	if (!globals->real_connect) abort();
+	globals->real_accept4 = dlsym(RTLD_NEXT, "accept4");
+	if (!globals->real_accept4) abort();
+	globals->real_getsockname = dlsym(RTLD_NEXT, "getsockname");
+	if (!globals->real_getsockname) abort();
+	globals->real_getpeername = dlsym(RTLD_NEXT, "getpeername");
+	if (!globals->real_getpeername) abort();
 	char *stealth_mode = getenv("SKBOX_STEALTH_MODE");
 	if (stealth_mode && (stealth_mode[0] == '1')) {
-		enable_stealth_mode = 1;
+		globals->enable_stealth_mode = 1;
 	}
 	stealth_mode = getenv("SKBOX_ENABLE_CONNECT");
 	if (stealth_mode && (stealth_mode[0] == 'b')) {
-		enable_connect_b = 1;
+		globals->enable_connect_b = 1;
 		stealth_mode++;
 	}
 	if (stealth_mode && (stealth_mode[0] >= '1') && (stealth_mode[0] <= '9')) {
-		enable_connect = stealth_mode[0] - '0';
+		globals->enable_connect = stealth_mode[0] - '0';
 	}
 	stealth_mode = getenv("SKBOX_CLEAR_SCOPE_ID");
 	if (stealth_mode && (stealth_mode[0] == '1')) {
-		enable_override_scope_id = 1;
+		globals->enable_override_scope_id = 1;
 	}
 	stealth_mode = getenv("SKBOX_ACCEPT_HACK");
 	if (stealth_mode && (stealth_mode[0] >= '1') && (stealth_mode[0] <= '9')) {
-		enable_accept_hack = stealth_mode[0] - '0';
+		globals->enable_accept_hack = stealth_mode[0] - '0';
 	}
 	char *directory = getenv("SKBOX_DIRECTORY_ROOT");
 	if (directory) {
 		if (strlen(directory) < SKBOX_PATH_MAX) {
-			strncpy(directory_path, directory, SKBOX_PATH_MAX);
+			strncpy(globals->directory_path, directory, SKBOX_PATH_MAX);
 			__sync_synchronize();
-			directory_fd = -10;
+			globals->directory_fd = -10;
 		}
 	}
 	char *directory2 = getenv("SKBOX_DIRECTORY_ROOT2");
-	if (directory2 && !directory2_path) {
+	if (directory2 && !globals->directory2_path) {
 		char *new_value = strdup(directory2);
 		if (!new_value) abort();
-		directory2_path = new_value;
+		globals->directory2_path = new_value;
 		__sync_synchronize();
-		has_directory2 = 1;
+		globals->has_directory2 = 1;
 	}
 	stealth_mode = getenv("SKBOX_GETPEERNAME_PROTECTION");
 	if (stealth_mode && (stealth_mode[0] >= '0') && (stealth_mode[0] <= '9')) {
-		enable_getpeername_protection = stealth_mode[0] - '0';
+		globals->enable_getpeername_protection = stealth_mode[0] - '0';
 	}
 	stealth_mode = getenv("SKBOX_ACCEPT_STREAM");
 	if (stealth_mode && (stealth_mode[0] == '1')) {
-		enable_stream_seqpacket = 1;
+		globals->enable_stream_seqpacket = 1;
 	}
 	stealth_mode = getenv("SKBOX_BLOCK_LISTEN_EMPTY_ADDR");
 	if (stealth_mode && (stealth_mode[0] == '0')) {
-		enable_block_listen = 0;
+		globals->enable_block_listen = 0;
 	}
 	stealth_mode = getenv("SKBOX_STRICT_STREAM_MODE");
 	if (stealth_mode && (stealth_mode[0] >= '0') && (stealth_mode[0] <= '9')) {
-		enable_strict_socket_mode = atoi(stealth_mode);
+		globals->enable_strict_socket_mode = atoi(stealth_mode);
 	}
 	stealth_mode = getenv("SKBOX_SCHED_YIELD");
 	if (stealth_mode && (stealth_mode[0] == '1')) {
-		enable_yield_counter = 1;
+		globals->enable_yield_counter = 1;
 	}
 	stealth_mode = getenv("SKBOX_PORT_FILTER_IPV6");
-	switch (skbox_parse_port_filter(stealth_mode, filter_fe8f)) {
+	switch (skbox_parse_port_filter(stealth_mode, globals->filter_fe8f)) {
 		case 1: /* parsed successfully */
 			break;
 		case 0: /* use defaults */
-			filter_fe8f[0] = 1024;
-			filter_fe8f[1] = 1024;
-			filter_fe8f[2] = 0;
+			globals->filter_fe8f[0] = 1024;
+			globals->filter_fe8f[1] = 1024;
+			globals->filter_fe8f[2] = 0;
 			break;
 		default:
 			fprintf(stderr, "[libsocketbox-preload] Invalid IPv6 port filter: %s\n", stealth_mode);
@@ -629,13 +605,13 @@ void __socketbox_preload_init(void) {
 			return;
 	}
 	stealth_mode = getenv("SKBOX_PORT_FILTER_IPV4");
-	switch (skbox_parse_port_filter(stealth_mode, filter_127180)) {
+	switch (skbox_parse_port_filter(stealth_mode, globals->filter_127180)) {
 		case 1: /* parsed successfully */
 			break;
 		case 0:
-			filter_127180[0] = 0;
-			filter_127180[1] = 0;
-			filter_127180[2] = 0;
+			globals->filter_127180[0] = 0;
+			globals->filter_127180[1] = 0;
+			globals->filter_127180[2] = 0;
 			break;
 		default:
 			fprintf(stderr, "[libsocketbox-preload] Invalid IPv4 port filter: %s\n", stealth_mode);
@@ -643,13 +619,13 @@ void __socketbox_preload_init(void) {
 			return;
 	}
 	stealth_mode = getenv("SKBOX_PORT_FILTER_IPV6_WILDCARD");
-	switch (skbox_parse_port_filter(stealth_mode, filter_wildcard6)) {
+	switch (skbox_parse_port_filter(stealth_mode, globals->filter_wildcard6)) {
 		case 1: /* parsed successfully */
 			break;
 		case 0: /* use defaults */
-			filter_wildcard6[0] = 0;
-			filter_wildcard6[1] = 0;
-			filter_wildcard6[2] = 0;
+			globals->filter_wildcard6[0] = 0;
+			globals->filter_wildcard6[1] = 0;
+			globals->filter_wildcard6[2] = 0;
 			break;
 		default:
 			fprintf(stderr, "[libsocketbox-preload] Invalid IPv6 wildcard port filter: %s\n", stealth_mode);
@@ -657,13 +633,13 @@ void __socketbox_preload_init(void) {
 			return;
 	}
 	stealth_mode = getenv("SKBOX_PORT_FILTER_IPV4_WILDCARD");
-	switch (skbox_parse_port_filter(stealth_mode, filter_wildcard4)) {
+	switch (skbox_parse_port_filter(stealth_mode, globals->filter_wildcard4)) {
 		case 1: /* parsed successfully */
 			break;
 		case 0: /* use defaults */
-			filter_wildcard4[0] = 0;
-			filter_wildcard4[1] = 0;
-			filter_wildcard4[2] = 0;
+			globals->filter_wildcard4[0] = 0;
+			globals->filter_wildcard4[1] = 0;
+			globals->filter_wildcard4[2] = 0;
 			break;
 		default:
 			fprintf(stderr, "[libsocketbox-preload] Invalid IPv4 wildcard port filter: %s\n", stealth_mode);
