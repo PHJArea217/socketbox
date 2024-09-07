@@ -40,8 +40,9 @@ int main(int argc, char **argv) {
 	int has_reg_proto = 0;
 	uint32_t reg_proto_nr = 0;
 	char *reg_proto_sock_name = NULL;
+	int enable_subst = 0;
 	/* FIXME: nsenter + enter user namespace */
-	while ((opt = getopt(argc, argv, "+f:l:p:tFRrs:eu:g:G:kdx:S:i:b:zP:")) >= 0) {
+	while ((opt = getopt(argc, argv, "+f:l:p:tFRrs:eu:g:G:kdx:S:i:b:zP:U")) >= 0) {
 		switch(opt) {
 			case 'f':
 				config_file = optarg;
@@ -179,6 +180,9 @@ int main(int argc, char **argv) {
 				}
 				free(reg_proto_sock_name);
 				reg_proto_sock_name = sock_path;
+				break;
+			case 'U':
+				enable_subst = 1;
 				break;
 			default:
 				/* FIXME: help text */
@@ -340,6 +344,8 @@ int main(int argc, char **argv) {
 		}
 		const struct skbox_action *result_action = forced_action ? forced_action : skbox_iterative_lookup(&current_connection, my_config->rules, my_config->nr_rules, my_config->maps, my_config->nr_maps, 100);
 		if (result_action) {
+			struct sockaddr_un subst = {};
+			struct sockaddr *subst_val = NULL;
 			switch(result_action->type) {
 				case SKBOX_ACTION_FD:
 					if (skbox_send_fd(result_action->action.send_fd, new_fd, NULL, 0)) {
@@ -353,7 +359,13 @@ int main(int argc, char **argv) {
 					}
 					break;
 				case SKBOX_ACTION_SOCKET:
-					if (skbox_send_fd(send_socket, new_fd, (struct sockaddr *) result_action->action.name, sizeof(struct sockaddr_un))) {
+					subst_val = (struct sockaddr *) result_action->action.name;
+					if (enable_subst) {
+						memcpy(&subst, subst_val, sizeof(struct sockaddr_un));
+						skbox_sockaddr_un_subst(&local_addr, &subst, sizeof(struct sockaddr_un));
+						subst_val = (struct sockaddr *) &subst;
+					}
+					if (skbox_send_fd(send_socket, new_fd, subst_val, sizeof(struct sockaddr_un))) {
 					}
 					break;
 			}

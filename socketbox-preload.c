@@ -15,20 +15,8 @@
 #include <sched.h>
 #include <stdio.h>
 #include "socketbox-preload.h"
-static void int16tonum(uint16_t num, char *result) {
-	const char *numbers = "0123456789";
-	result[4] = numbers[num % 10];
-	num = num / 10;
-	result[3] = numbers[num % 10];
-	num = num / 10;
-	result[2] = numbers[num % 10];
-	num = num / 10;
-	result[1] = numbers[num % 10];
-	num = num / 10;
-	result[0] = numbers[num % 10];
-}
 static struct socketbox_preload globals_m = {
-	.int16tonum = int16tonum,
+	.int16tonum = skbox_int16tonum,
 	.directory_fd = -1,
 	.enable_getpeername_protection = 2,
 	.enable_block_listen = 1,
@@ -200,9 +188,9 @@ skip_fe8f_check:
 		if (!globals->has_directory2) goto do_real_bind;
 		__sync_synchronize();
 		char filename[20] = "/XXXXX/XXXXX_XXXXX\0";
-		int16tonum(ntohs(addr6->sin6_addr.s6_addr16[6]), &filename[1]);
-		int16tonum(ntohs(addr6->sin6_addr.s6_addr16[7]), &filename[7]);
-		int16tonum(p_host, &filename[13]);
+		globals->int16tonum(ntohs(addr6->sin6_addr.s6_addr16[6]), &filename[1]);
+		globals->int16tonum(ntohs(addr6->sin6_addr.s6_addr16[7]), &filename[7]);
+		globals->int16tonum(p_host, &filename[13]);
 		if (alt_mode == 2) {
 			filename[1] = 'X';
 		}
@@ -212,7 +200,7 @@ skip_fe8f_check:
 		__sync_synchronize();
 		uint16_t dir_file = ntohs(addr6->sin6_addr.s6_addr16[6]);
 		char filename[20] = "/skbox_dir_XXXXX\0";
-		int16tonum(dir_file, &filename[11]);
+		globals->int16tonum(dir_file, &filename[11]);
 
 		char directory_full_path[SKBOX_PATH_MAX + 1] = {0};
 		size_t n = write_string_to_buf(directory_full_path, SKBOX_PATH_MAX, globals->directory_path, filename);
@@ -241,7 +229,7 @@ skip_fe8f_check:
 		/* Replace _@SB_ with the actual given port number */
 		char *m = memmem(result.sun_path, sizeof(result.sun_path), "_@SB_", 5);
 		if (m) {
-			int16tonum(p_host, m);
+			globals->int16tonum(p_host, m);
 		}
 	}
 	/* Try to inherit the original socket flags */

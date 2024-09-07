@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "libsocketbox.h"
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -148,4 +149,36 @@ int skbox_check_port_filter(uint16_t port_to_test, const uint16_t filter[32]) {
 		if (port_to_test == filter[i]) return 1;
 	}
 	return 0;
+}
+void skbox_int16tonum(uint16_t num, char *result) {
+	const char *numbers = "0123456789";
+	result[4] = numbers[num % 10];
+	num = num / 10;
+	result[3] = numbers[num % 10];
+	num = num / 10;
+	result[2] = numbers[num % 10];
+	num = num / 10;
+	result[1] = numbers[num % 10];
+	num = num / 10;
+	result[0] = numbers[num % 10];
+}
+void skbox_sockaddr_un_subst(const struct sockaddr_in6 *sockaddr, struct sockaddr_un *resultant, uint32_t length) {
+	char *subst_val = memmem(resultant->sun_path, length, "#//0_", 5);
+	if (subst_val) skbox_int16tonum(ntohs(sockaddr->sin6_addr.s6_addr16[0]), subst_val);
+	subst_val = memmem(resultant->sun_path, length, "#//1_", 5);
+	if (subst_val) skbox_int16tonum(ntohs(sockaddr->sin6_addr.s6_addr16[1]), subst_val);
+	subst_val = memmem(resultant->sun_path, length, "#//2_", 5);
+	if (subst_val) skbox_int16tonum(ntohs(sockaddr->sin6_addr.s6_addr16[2]), subst_val);
+	subst_val = memmem(resultant->sun_path, length, "#//3_", 5);
+	if (subst_val) skbox_int16tonum(ntohs(sockaddr->sin6_addr.s6_addr16[3]), subst_val);
+	subst_val = memmem(resultant->sun_path, length, "#//4_", 5);
+	if (subst_val) skbox_int16tonum(ntohs(sockaddr->sin6_addr.s6_addr16[4]), subst_val);
+	subst_val = memmem(resultant->sun_path, length, "#//5_", 5);
+	if (subst_val) skbox_int16tonum(ntohs(sockaddr->sin6_addr.s6_addr16[5]), subst_val);
+	subst_val = memmem(resultant->sun_path, length, "#//6_", 5);
+	if (subst_val) skbox_int16tonum(ntohs(sockaddr->sin6_addr.s6_addr16[6]), subst_val);
+	subst_val = memmem(resultant->sun_path, length, "#//7_", 5);
+	if (subst_val) skbox_int16tonum(ntohs(sockaddr->sin6_addr.s6_addr16[7]), subst_val);
+	subst_val = memmem(resultant->sun_path, length, "#//P_", 5);
+	if (subst_val) skbox_int16tonum(ntohs(sockaddr->sin6_port), subst_val);
 }

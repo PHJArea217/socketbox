@@ -1,4 +1,6 @@
 #include "unix_scm_rights.h"
+#include <netinet/in.h>
+#include <sys/un.h>
 struct skbox_reg_request {
 	uint8_t req;
 	uint8_t reserved_1;
@@ -19,3 +21,5 @@ int skbox_register_fd(int fd, uint32_t target);
 int skbox_register_bind(const char *pathname, uint32_t target);
 int skbox_check_port_filter(uint16_t port_to_test, const uint16_t filter[32]);
 int skbox_parse_port_filter(const char *filter, uint16_t result[32]);
+void skbox_int16tonum(uint16_t i, char *result);
+void skbox_sockaddr_un_subst(const struct sockaddr_in6 *sockaddr, struct sockaddr_un *resultant, uint32_t length);
